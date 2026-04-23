@@ -51,7 +51,7 @@ export const AGENT_TOOLS = [
   {
     name: 'show_mood_board',
     description:
-      'Show the Taste Transfer mood board picker. The user selects one of 9 curated moods. Use for fast aesthetic signal.',
+      "Show the Taste Transfer screen. Three modes the user can switch between: (a) Mood board — pick one of 9 curated moods; (b) Instagram — paste a handle; (c) Taste icon — pick a style reference. Tool result's `mode` field tells you which path the user took. For Instagram, trust your training knowledge to read the aesthetic; if unknown, say so honestly.",
     input_schema: {
       type: 'object',
       properties: {
@@ -106,11 +106,11 @@ export const AGENT_TOOLS = [
     description:
       'Switch to a Fit Twin layer. Layers in accuracy order: ' +
       'essentials = gender/segment + height + shoe size (unlocks segment-aware content — MUST be the first tool you ever call). ' +
-      'closet_anchor = name a garment that fits (80% size signal). ' +
-      'fit_twins = pick the client profile closest to you (90%). ' +
+      'closet_anchor = collect ONE top + ONE bottom that fit well (85% head-to-toe size signal). ' +
+      'fit_twins = pick the client profile closest to you (90%) — cards are shortlisted to match their captured height + closet sizes. ' +
       'sharpen = 2 agent-generated disambiguators (95%). ' +
-      'ar = MediaPipe Pose scan (98%) — only after show_tailor_precision_offer returns {accepted: true}. ' +
-      'budget = Style Allowance slider + Fix size. Always pair with a show_tailor_precision_offer before conclude.',
+      'budget = Style Allowance slider + Fix size. ' +
+      "The tailor-precision (AR camera) step is handled by show_tailor_precision_offer — don't call an 'ar' layer here.",
     input_schema: {
       type: 'object',
       properties: {
@@ -121,7 +121,6 @@ export const AGENT_TOOLS = [
             'closet_anchor',
             'fit_twins',
             'sharpen',
-            'ar',
             'budget',
           ],
         },
@@ -133,7 +132,7 @@ export const AGENT_TOOLS = [
   {
     name: 'show_tailor_precision_offer',
     description:
-      'Explicitly ask the user whether they want tailor-level precision via MediaPipe Pose (takes ~60s, returns shoulder/torso/inseam measurements). Must be called near the end — before conclude_with_persona — regardless of whether the AR layer was called earlier. Tool result is {accepted: true|false}; if accepted, follow up with show_fit_twin_layer(ar), otherwise proceed to conclude_with_persona.',
+      'The final pre-conclude step. ONE screen that hosts the offer AND (if the user accepts) the camera prompt + MediaPipe Pose capture. Tool result is either {accepted:false} OR {accepted:true, measurements:{shoulder_width_in, torso_length_in, inseam_in, arm_length_in, height_reference_in, confidence}}. After this returns, move directly to conclude_with_persona — do NOT call another AR layer.',
     input_schema: {
       type: 'object',
       properties: {

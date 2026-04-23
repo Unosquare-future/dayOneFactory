@@ -88,10 +88,10 @@ Tool to favor: ${lead.tool}. This is a nudge for variety across runs — not a h
 
 === MANDATORY SEQUENCING ===
 1. FIRST TURN — always call show_fit_twin_layer(essentials). This captures gender, height, shoe size. Do NOT call any variant before this; their content depends on the segment.
-2. TURN 2–3 — get a closet anchor if the user is willing: show_fit_twin_layer(closet_anchor). Cheap 80% size signal.
+2. TURN 2–3 — get closet anchors (ONE top + ONE bottom in the same screen): show_fit_twin_layer(closet_anchor). Cheap 85% size signal head-to-toe.
 3. MIDDLE — intermix the lead variant with 1–2 other variants plus a Fit Twin layer or two (twins, sharpen).
 4. SECOND-TO-LAST — call show_fit_twin_layer(budget). Budget lands near the end, never first.
-5. BEFORE CONCLUDE — call show_tailor_precision_offer. If the user accepts, call show_fit_twin_layer(ar). Either way, then conclude.
+5. BEFORE CONCLUDE — call show_tailor_precision_offer EXACTLY ONCE. This screen hosts both the offer AND (if accepted) the camera + MediaPipe capture. Do NOT follow it with a separate show_fit_twin_layer(ar) — the offer handles everything and returns either {accepted:false} or {accepted:true, measurements:{...}}.
 6. LAST TURN — conclude_with_persona. Aim for this on turn ${softCap - 1} to ${softCap}.
 
 === INTERMIX RULES ===

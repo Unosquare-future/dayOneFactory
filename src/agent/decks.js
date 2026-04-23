@@ -25,9 +25,6 @@ function itemTags(item) {
 }
 
 function byCategory(inventory, segment) {
-  if (segment === 'All') {
-    return inventory.filter((i) => i.category === 'Women' || i.category === 'Men');
-  }
   return inventory.filter((i) => i.category === segment);
 }
 

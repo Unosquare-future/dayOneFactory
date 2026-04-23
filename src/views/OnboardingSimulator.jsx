@@ -108,7 +108,7 @@ function WelcomeScreen({ thinking }) {
         Let's figure out how you dress.
       </h2>
       <p className="type-body-md text-ink-soft mt-3 max-w-[280px] leading-relaxed">
-        Six questions, give or take. We'll skip the boring parts.
+        Ten questions, give or take. We'll skip the boring parts.
       </p>
       {thinking && (
         <div className="mt-8 flex items-center gap-1.5">
@@ -322,46 +322,206 @@ function ThisOrThatScreen({ pair, onSubmit }) {
   );
 }
 
-// --- mood board (Taste Transfer) -----------------------------------------
+// --- Taste Transfer — 3 tabs (mood / handle / celeb) ---------------------
+// A fully real Taste Transfer moment: pick a curated mood, or paste an
+// Instagram handle, or pick a taste icon. All three submit signal that
+// the agent uses in its next turn. For Instagram and celeb modes we
+// pass the handle/name to Claude who infers the aesthetic from its
+// training knowledge — no spoofed results, no faked photos.
 
-function MoodBoardScreen({ onSubmit }) {
+const CELEB_PICKS = [
+  { name: 'Carolyn Bessette', desc: 'sharp minimalism, one perfect line', id: 'modern-muse' },
+  { name: 'Steve McQueen', desc: 'work jacket, boot, quiet cool', id: 'rustic-rebel' },
+  { name: 'Jane Birkin', desc: 'relaxed, soft, a little unbothered', id: 'coastal-sport' },
+  { name: 'Brunello Cucinelli', desc: 'cashmere as a philosophy', id: 'modern-prep' },
+  { name: 'Sade', desc: 'ink, silver, restraint', id: 'studio-minimal' },
+  { name: 'Jenny Slate', desc: 'soft prints, stories, layers', id: 'boho-dreamer' },
+];
+
+/** Map each mood's gradient palette to the first inventory item with a
+ *  real Unsplash image that shares it — so mood tiles render photos. */
+function moodHeroFor(mood, inventory) {
+  const match = inventory.find((i) => i.ph === mood.ph && i.imageUrl);
+  return match || null;
+}
+
+function TasteTransferScreen({ onSubmit }) {
+  const { inventory } = useFactory();
+  const [mode, setMode] = useState('board');
+  const [handle, setHandle] = useState('');
+  const [processing, setProcessing] = useState(false);
+
+  function submitMood(m) {
+    onSubmit({
+      mode: 'mood',
+      mood_id: m.id,
+      mood_title: m.title,
+      mood_sub: m.sub,
+    });
+  }
+  function submitHandle() {
+    const h = handle.trim().replace(/^@/, '');
+    if (!h) return;
+    setProcessing(true);
+    // Fire immediately — Claude infers aesthetic on the next turn
+    setTimeout(() => {
+      onSubmit({
+        mode: 'instagram_handle',
+        handle: h,
+        note:
+          'User submitted an Instagram handle. Read the aesthetic from your training knowledge of this creator/brand if known; if unknown, say so honestly and lean on other signals.',
+      });
+    }, 300);
+  }
+  function submitCeleb(c) {
+    onSubmit({
+      mode: 'celeb',
+      name: c.name,
+      descriptor: c.desc,
+      archetype_hint: c.id,
+    });
+  }
+
+  if (processing) {
+    return (
+      <div className="absolute inset-0 bg-surface flex flex-col items-center justify-center p-8 text-center">
+        <div className="relative w-24 h-24 mb-5">
+          <div className="absolute inset-0 rounded-full border-2 border-outline-variant" />
+          <div
+            className="absolute inset-0 rounded-full border-2 border-teal border-t-transparent animate-spin"
+            style={{ animationDuration: '1.4s' }}
+          />
+        </div>
+        <div className="type-headline-md text-navy leading-tight">
+          Reading between the lines.
+        </div>
+        <div className="type-eyebrow text-ink-soft mt-2">
+          @{handle.replace(/^@/, '')}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
       <div className="px-5 pt-5 pb-3">
         <Eyebrow>Taste Transfer</Eyebrow>
-        <div className="text-[18px] font-semibold text-navy leading-tight tracking-tight mt-1">
-          Which of these moods is closest to yours?
+        <div className="text-[17px] font-semibold text-navy leading-tight tracking-tight mt-1">
+          Pick a mood. Drop a handle. Pick a taste icon.
         </div>
       </div>
+      <div className="px-5 pb-3">
+        <Segmented
+          className="w-full flex"
+          options={[
+            { value: 'board', label: 'Mood board' },
+            { value: 'handle', label: 'Instagram' },
+            { value: 'celeb', label: 'Taste icon' },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
+      </div>
       <div className="flex-1 overflow-y-auto px-5 pb-5">
-        <div className="grid grid-cols-3 gap-2">
-          {MOOD_BOARDS.map((m) => (
-            <button
-              key={m.id}
-              onClick={() =>
-                onSubmit({
-                  mood_id: m.id,
-                  mood_title: m.title,
-                  mood_sub: m.sub,
-                })
-              }
-              className={cx(
-                'relative aspect-[3/4] rounded overflow-hidden border border-outline-variant transition-all ph-tex hover:scale-[1.02] hover:border-navy',
-                m.ph,
-              )}
+        {mode === 'board' && (
+          <div className="grid grid-cols-3 gap-2">
+            {MOOD_BOARDS.map((m) => {
+              const hero = moodHeroFor(m, inventory);
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => submitMood(m)}
+                  className={cx(
+                    'relative aspect-[3/4] rounded overflow-hidden border transition-all border-outline-variant hover:scale-[1.02] hover:border-navy',
+                    hero ? 'bg-surface-high' : cx('ph-tex', m.ph),
+                  )}
+                >
+                  {hero && (
+                    <img
+                      src={hero.imageUrl}
+                      alt={m.title}
+                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-gradient-to-t from-navy/70 via-navy/10 to-transparent" />
+                  <div className="absolute bottom-1.5 left-1.5 right-1.5 text-left">
+                    <div className="text-[12px] text-white font-semibold leading-tight">
+                      {m.title}
+                    </div>
+                    <div className="text-[8px] uppercase tracking-[0.14em] font-bold text-white/80 mt-0.5">
+                      {m.sub}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {mode === 'handle' && (
+          <div className="pt-4 space-y-3">
+            <Eyebrow>Instagram handle</Eyebrow>
+            <div className="flex items-center gap-2 bg-surface-lowest border border-outline-variant rounded px-4 py-3 focus-within:border-teal">
+              <span className="text-ink-soft">@</span>
+              <input
+                value={handle}
+                onChange={(e) => setHandle(e.target.value.replace(/^@/, ''))}
+                onKeyDown={(e) => e.key === 'Enter' && submitHandle()}
+                placeholder="someone whose closet you'd raid"
+                className="flex-1 bg-transparent text-[13.5px] placeholder:text-outline"
+                style={{ boxShadow: 'none' }}
+                autoFocus
+              />
+            </div>
+            <Button
+              variant="primary"
+              className="w-full justify-center"
+              onClick={submitHandle}
+              disabled={!handle.trim()}
             >
-              <div className="absolute inset-0 bg-gradient-to-t from-navy/60 to-transparent" />
-              <div className="absolute bottom-1.5 left-1.5 right-1.5 text-left">
-                <div className="text-[12px] text-white font-semibold leading-tight">
-                  {m.title}
+              <Icon name="sparkle" /> Read the aesthetic
+            </Button>
+            <div className="text-[11px] text-ink-soft leading-relaxed pt-1">
+              Your handle goes to the agent, which reads the aesthetic
+              from public training knowledge. If the account is unknown
+              we'll say so honestly.
+            </div>
+          </div>
+        )}
+
+        {mode === 'celeb' && (
+          <div className="pt-3 space-y-2">
+            {CELEB_PICKS.map((c) => (
+              <button
+                key={c.name}
+                onClick={() => submitCeleb(c)}
+                className="w-full flex items-center gap-3 p-3 rounded border border-outline-variant bg-surface-lowest hover:border-navy hover:bg-surface-low transition-colors text-left"
+              >
+                <div
+                  className={cx(
+                    'w-10 h-10 rounded-full ph-tex flex-shrink-0',
+                    (() => {
+                      const map = {
+                        'modern-muse': 'ph-10',
+                        'rustic-rebel': 'ph-7',
+                        'coastal-sport': 'ph-4',
+                        'modern-prep': 'ph-11',
+                        'studio-minimal': 'ph-2',
+                        'boho-dreamer': 'ph-8',
+                      };
+                      return map[c.id] || 'ph-5';
+                    })(),
+                  )}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] text-navy font-semibold">{c.name}</div>
+                  <div className="text-[11px] text-ink-soft italic mt-0.5">{c.desc}</div>
                 </div>
-                <div className="text-[8px] uppercase tracking-[0.14em] font-bold text-white/80 mt-0.5">
-                  {m.sub}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
+                <Icon name="chev" className="text-outline" />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -475,8 +635,9 @@ function EssentialsScreen({ onSubmit }) {
   const [shoe, setShoe] = useState(null);
 
   const shoeOptions = segment
-    ? ESSENTIALS_CONFIG.shoeSizes[segment] || ESSENTIALS_CONFIG.shoeSizes.All
-    : ESSENTIALS_CONFIG.shoeSizes.All;
+    ? ESSENTIALS_CONFIG.shoeSizes[segment] ||
+      ESSENTIALS_CONFIG.shoeSizes.Women
+    : ESSENTIALS_CONFIG.shoeSizes.Women;
 
   const canContinue = !!segment && !!shoe;
 
@@ -509,8 +670,8 @@ function EssentialsScreen({ onSubmit }) {
 
       <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-5">
         <section>
-          <Eyebrow className="mb-2">Shopping for</Eyebrow>
-          <div className="grid grid-cols-2 gap-1.5">
+          <Eyebrow className="mb-2">I'm shopping for</Eyebrow>
+          <div className="grid grid-cols-3 gap-1.5">
             {ESSENTIALS_CONFIG.segments.map((s) => (
               <button
                 key={s.id}
@@ -519,7 +680,7 @@ function EssentialsScreen({ onSubmit }) {
                   setShoe(null);
                 }}
                 className={cx(
-                  'px-3 py-2.5 rounded text-left border transition-colors',
+                  'px-3 py-3 rounded text-center border transition-colors',
                   segment === s.id
                     ? 'bg-navy text-white border-navy'
                     : 'bg-surface-lowest text-navy border-outline-variant hover:border-navy',
@@ -527,14 +688,6 @@ function EssentialsScreen({ onSubmit }) {
               >
                 <div className="text-[13px] font-bold uppercase tracking-[0.08em]">
                   {s.label}
-                </div>
-                <div
-                  className={cx(
-                    'text-[10.5px] mt-0.5',
-                    segment === s.id ? 'text-white/75' : 'text-ink-soft',
-                  )}
-                >
-                  {s.note}
                 </div>
               </button>
             ))}
@@ -606,21 +759,192 @@ function EssentialsScreen({ onSubmit }) {
   );
 }
 
-// --- Tailor-precision offer (pre-conclude) ------------------------------
+// --- Final Tailor-Precision (unified offer + AR capture) -----------------
+// ONE screen, one tool call. Phases:
+//   prompt   — "open camera" / "skip"
+//   preview  — live video + "capture" / "skip"
+//   capturing — frame grabbed
+//   analyzing — MediaPipe Pose landmarks → measurements
+//   error    — retry / skip
+// The submit payload includes either { accepted:false } OR
+// { accepted:true, captured, image_base64, measurements }.
 
-function TailorPrecisionOfferScreen({ onSubmit }) {
+function FinalPrecisionScreen({ onSubmit, heightInches }) {
+  const videoRef = useRef(null);
+  const [stream, setStream] = useState(null);
+  const [phase, setPhase] = useState('prompt'); // prompt | preview | capturing | analyzing | error
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    // Cleanup when the screen unmounts
+    return () => stopStream(stream);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stream]);
+
+  async function openCamera() {
+    try {
+      // Preload the MediaPipe model in the background while the user
+      // lines up the shot — by the time they hit Capture it's ready.
+      ensurePoseLandmarker().catch(() => {});
+      const s = await requestCameraStream();
+      if (videoRef.current) videoRef.current.srcObject = s;
+      setStream(s);
+      setPhase('preview');
+    } catch (e) {
+      setErr(e.message || 'Camera unavailable');
+      setPhase('error');
+    }
+  }
+
+  async function capture() {
+    try {
+      setPhase('capturing');
+      const frame = captureFrame(videoRef.current);
+      setPhase('analyzing');
+      stopStream(stream);
+      setStream(null);
+
+      let measurements = null;
+      try {
+        const img = new Image();
+        img.src = frame.dataUrl;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+        const pose = await detectPose(img);
+        if (pose && heightInches) {
+          measurements = deriveMeasurements(pose, heightInches);
+        }
+      } catch (poseErr) {
+        // Non-fatal — still submit the frame
+        // eslint-disable-next-line no-console
+        console.warn('[final-precision] pose detect failed:', poseErr?.message || poseErr);
+      }
+
+      onSubmit({
+        accepted: true,
+        captured: true,
+        image_base64: frame.base64,
+        image_media_type: frame.mediaType,
+        measurements,
+        tailor_method: TAILOR_METHOD.name,
+      });
+    } catch (e) {
+      setErr(e.message || 'Capture failed');
+      setPhase('error');
+    }
+  }
+
+  function skip() {
+    stopStream(stream);
+    setStream(null);
+    onSubmit({ accepted: false });
+  }
+
+  if (phase === 'capturing' || phase === 'analyzing') {
+    return (
+      <div className="absolute inset-0 bg-navy text-white flex flex-col items-center justify-center text-center p-6">
+        <div className="relative w-36 h-36 mb-6">
+          <div className="absolute inset-0 rounded-full border-2 border-white/20" />
+          <div
+            className="absolute inset-0 rounded-full border-2 border-teal border-t-transparent animate-spin"
+            style={{ animationDuration: '1.4s' }}
+          />
+        </div>
+        <div className="text-[20px] font-semibold">
+          {phase === 'capturing' ? 'Capturing.' : 'Locking fit signal.'}
+        </div>
+        <div className="type-eyebrow text-white/70 mt-3">
+          {TAILOR_METHOD.name} · 98%
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'error') {
+    return (
+      <div className="absolute inset-0 bg-surface flex flex-col p-5">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow>Optional · before we wrap</Eyebrow>
+          <Badge tone="outline">Camera unavailable</Badge>
+        </div>
+        <div className="text-[17px] font-semibold text-navy leading-tight">
+          Couldn't open the camera.
+        </div>
+        <p className="text-[12px] text-ink-soft mt-2 leading-relaxed">
+          {err} — this is usually a browser permission prompt. You can
+          retry or skip and we'll wrap with 95% fit accuracy.
+        </p>
+        <div className="mt-auto space-y-2">
+          <Button
+            variant="primary"
+            className="w-full justify-center"
+            onClick={openCamera}
+          >
+            <Icon name="sparkle" /> Try again
+          </Button>
+          <button
+            onClick={skip}
+            className="w-full text-center text-[12px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
+          >
+            Skip — finish with 95%
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === 'preview') {
+    return (
+      <div className="absolute inset-0 bg-navy flex flex-col">
+        <div className="px-5 pt-5 pb-2 text-white">
+          <Eyebrow className="text-white/80">Tailor-level precision</Eyebrow>
+          <div className="text-[17px] font-semibold leading-tight mt-1">
+            Step back until you're fully in frame.
+          </div>
+        </div>
+        <div className="flex-1 relative bg-black/40 mx-5 my-3 rounded-md overflow-hidden border border-white/20">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
+          />
+          <div className="absolute inset-6 rounded-md border-2 border-teal/60 pointer-events-none" />
+        </div>
+        <div className="px-5 pb-5 pt-2 space-y-2">
+          <Button
+            variant="primary"
+            className="w-full justify-center"
+            onClick={capture}
+          >
+            <Icon name="sparkle" /> Capture
+          </Button>
+          <button
+            onClick={skip}
+            className="w-full text-center text-[12px] text-white/70 py-1.5 hover:text-white font-bold uppercase tracking-[0.08em]"
+          >
+            Skip — finish with 95%
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // phase === 'prompt'
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
       <div className="px-5 pt-5 pb-3">
         <div className="flex items-center justify-between mb-2">
-          <Eyebrow>Optional · before we wrap</Eyebrow>
-          <Badge tone="lime">Premium · 98%</Badge>
+          <Eyebrow>Optional · final step</Eyebrow>
+          <Badge tone="lime">Premium · +98%</Badge>
         </div>
-        <div className="text-[20px] font-semibold text-navy leading-tight tracking-tight">
+        <div className="text-[19px] font-semibold text-navy leading-tight tracking-tight">
           Want tailor-level precision?
         </div>
       </div>
-
       <div className="flex-1 px-5 pb-3 flex flex-col">
         <div className="relative flex-1 rounded-md border border-outline-variant overflow-hidden bg-navy text-white flex flex-col items-center justify-center p-6 ph-tex ph-10">
           <div className="absolute inset-0 bg-gradient-to-b from-navy/40 to-navy/80 pointer-events-none" />
@@ -629,12 +953,12 @@ function TailorPrecisionOfferScreen({ onSubmit }) {
               <Icon name="sparkle" size={22} className="text-white" />
             </div>
             <div className="text-[18px] font-semibold leading-tight">
-              One selfie unlocks 98% fit accuracy.
+              One selfie unlocks 98% fit.
             </div>
             <p className="text-[12px] text-white/85 mt-3 leading-relaxed">
               Powered by {TAILOR_METHOD.name} — runs locally in this tab.
-              We capture shoulder width, torso length, and inseam from a
-              single frame combined with the height you just entered.
+              We combine 33 pose landmarks with the height you already
+              entered to measure shoulder, torso, and inseam.
             </p>
             <p className="text-[10.5px] text-white/60 mt-2 italic">
               {TAILOR_METHOD.vendor} · {TAILOR_METHOD.runtime}
@@ -642,35 +966,44 @@ function TailorPrecisionOfferScreen({ onSubmit }) {
           </div>
         </div>
       </div>
-
       <div className="px-5 pb-5 pt-3 border-t border-outline-variant space-y-2">
         <Button
           variant="primary"
           className="w-full justify-center"
-          onClick={() => onSubmit({ accepted: true })}
+          onClick={openCamera}
         >
-          <Icon name="sparkle" /> Go premium · open camera
+          <Icon name="sparkle" /> Open camera
         </Button>
         <button
-          onClick={() => onSubmit({ accepted: false })}
+          onClick={skip}
           className="w-full text-center text-[12px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
         >
-          I'm good — finish with 95%
+          Skip — finish with 95%
         </button>
       </div>
     </div>
   );
 }
 
-// --- Fit Twin: closet anchor --------------------------------------------
+// --- Fit Twin: closet anchor (Layer 01) -------------------------------
+// The writeup's key insight: one garment that fits gives ~80% signal.
+// Two (one top + one bottom) pushes us to ~85% and — importantly —
+// covers the full body so we can infer measurements top-to-bottom.
+// ----------------------------------------------------------------------
 
-function ClosetAnchorScreen({ onSubmit }) {
+function AnchorInput({
+  slotLabel,          // "Top" | "Bottom"
+  filterCategories,   // e.g. ['Tops']  or  ['Bottoms']
+  selected,
+  onSelect,
+  size,
+  onSize,
+}) {
   const [query, setQuery] = useState('');
   const [focused, setFocused] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const [size, setSize] = useState('');
+  const pool = CLOSET_CATALOG.filter((g) => filterCategories.includes(g.category));
   const suggestions = query.trim()
-    ? CLOSET_CATALOG.filter((g) => {
+    ? pool.filter((g) => {
         const q = query.toLowerCase();
         return (
           g.keywords.some((k) => k.includes(q)) ||
@@ -679,115 +1012,195 @@ function ClosetAnchorScreen({ onSubmit }) {
         );
       }).slice(0, 5)
     : [];
+  return (
+    <div>
+      <Eyebrow className="mb-1.5">{slotLabel}</Eyebrow>
+      <div className="relative">
+        <div className="flex items-center gap-2 bg-surface-lowest border border-outline-variant rounded px-3 py-2 focus-within:border-teal">
+          <Icon name="search" size={14} className="text-ink-soft" />
+          <input
+            value={
+              selected ? `${selected.brand} ${selected.name}` : query
+            }
+            onChange={(e) => {
+              onSelect(null);
+              setQuery(e.target.value);
+            }}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setTimeout(() => setFocused(false), 200)}
+            placeholder={
+              slotLabel === 'Top'
+                ? 'e.g. J.Crew cashmere, Uniqlo Airism'
+                : "e.g. Levi's 501, Madewell Cali"
+            }
+            className="flex-1 bg-transparent text-[12.5px] placeholder:text-outline"
+            style={{ boxShadow: 'none' }}
+          />
+        </div>
+        {focused && suggestions.length > 0 && !selected && (
+          <div className="absolute left-0 right-0 mt-1.5 bg-surface-lowest border border-outline-variant rounded shadow-lift overflow-hidden z-10">
+            {suggestions.map((g) => (
+              <button
+                key={g.id}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  onSelect(g);
+                  setQuery('');
+                }}
+                className="w-full text-left px-3 py-2 hover:bg-surface-base transition-colors flex items-center gap-3"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12.5px] text-navy font-semibold leading-tight">
+                    {g.brand}
+                  </div>
+                  <div className="text-[11px] text-ink-soft truncate">
+                    {g.name}
+                  </div>
+                </div>
+                <div className="type-eyebrow text-ink-soft">{g.category}</div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {selected && (
+        <div className="mt-2 flex flex-wrap gap-1 bloom">
+          {selected.sizes.map((s) => (
+            <button
+              key={s}
+              onClick={() => onSize(s)}
+              className={cx(
+                'px-2.5 py-1 rounded text-[10.5px] font-bold tabular-nums border transition-colors',
+                size === s
+                  ? 'bg-navy text-white border-navy'
+                  : 'bg-surface-lowest text-navy border-outline-variant hover:border-navy',
+              )}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClosetAnchorScreen({ onSubmit }) {
+  const [topItem, setTopItem] = useState(null);
+  const [topSize, setTopSize] = useState('');
+  const [bottomItem, setBottomItem] = useState(null);
+  const [bottomSize, setBottomSize] = useState('');
+
+  const canContinue =
+    topItem && topSize && bottomItem && bottomSize;
+
   function commit() {
-    if (!selected || !size) return;
+    if (!canContinue) return;
     onSubmit({
       layer: 'closet_anchor',
-      brand: selected.brand,
-      name: selected.name,
-      size,
-      size_profile: selected.sizeProfile,
+      top: {
+        brand: topItem.brand,
+        name: topItem.name,
+        size: topSize,
+        size_profile: topItem.sizeProfile,
+      },
+      bottom: {
+        brand: bottomItem.brand,
+        name: bottomItem.name,
+        size: bottomSize,
+        size_profile: bottomItem.sizeProfile,
+      },
     });
   }
+
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
       <div className="px-5 pt-5 pb-3">
         <div className="flex items-center justify-between mb-2">
           <Eyebrow>Fit Twin · layer 01</Eyebrow>
-          <Badge tone="teal">+80%</Badge>
+          <Badge tone="teal">+85%</Badge>
         </div>
-        <div className="text-[18px] font-semibold text-navy leading-tight tracking-tight">
-          Name one thing you own that fits you really well.
+        <div className="text-[17px] font-semibold text-navy leading-tight tracking-tight">
+          Name one top and one bottom that fit you well.
         </div>
+        <p className="text-[11.5px] text-ink-soft mt-1.5 leading-relaxed">
+          Two anchors cover your whole body — we use the brand's real
+          measurements to size you head to toe.
+        </p>
       </div>
-      <div className="flex-1 overflow-y-auto px-5 pb-3">
-        <div className="relative">
-          <div className="flex items-center gap-2 bg-surface-lowest border border-outline-variant rounded px-3 py-2.5 focus-within:border-teal">
-            <Icon name="search" size={16} className="text-ink-soft" />
-            <input
-              value={
-                selected
-                  ? `${selected.brand} ${selected.name}`
-                  : query
-              }
-              onChange={(e) => {
-                setSelected(null);
-                setQuery(e.target.value);
-              }}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setTimeout(() => setFocused(false), 200)}
-              placeholder="e.g. Levi's 501 or Madewell Cali"
-              className="flex-1 bg-transparent text-[13.5px] placeholder:text-outline"
-              style={{ boxShadow: 'none' }}
-            />
-          </div>
-          {focused && suggestions.length > 0 && !selected && (
-            <div className="absolute left-0 right-0 mt-2 bg-surface-lowest border border-outline-variant rounded shadow-lift overflow-hidden z-10">
-              {suggestions.map((g) => (
-                <button
-                  key={g.id}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setSelected(g);
-                    setQuery('');
-                  }}
-                  className="w-full text-left px-3 py-2.5 hover:bg-surface-base transition-colors flex items-center gap-3"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] text-navy font-semibold leading-tight">
-                      {g.brand}
-                    </div>
-                    <div className="text-[12px] text-ink-soft truncate">
-                      {g.name}
-                    </div>
-                  </div>
-                  <div className="type-eyebrow text-ink-soft">
-                    {g.category}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        {selected && (
-          <div className="mt-4 p-3 rounded border border-teal bg-teal/10 bloom">
-            <Eyebrow className="mb-2">Size you wear</Eyebrow>
-            <div className="flex flex-wrap gap-1.5">
-              {selected.sizes.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setSize(s)}
-                  className={cx(
-                    'px-3 py-1.5 rounded text-[11px] font-bold tabular-nums border transition-colors',
-                    size === s
-                      ? 'bg-navy text-white border-navy'
-                      : 'bg-surface-lowest text-navy border-outline-variant hover:border-navy',
-                  )}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+      <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-4">
+        <AnchorInput
+          slotLabel="Top"
+          filterCategories={['Tops']}
+          selected={topItem}
+          onSelect={setTopItem}
+          size={topSize}
+          onSize={setTopSize}
+        />
+        <AnchorInput
+          slotLabel="Bottom"
+          filterCategories={['Bottoms']}
+          selected={bottomItem}
+          onSelect={setBottomItem}
+          size={bottomSize}
+          onSize={setBottomSize}
+        />
       </div>
       <div className="px-5 pb-5 pt-3 border-t border-outline-variant">
         <Button
           variant="primary"
           className="w-full justify-center"
           onClick={commit}
-          disabled={!selected || !size}
+          disabled={!canContinue}
         >
-          <Icon name="check" /> Lock in my anchor
+          <Icon name="check" /> Lock in both anchors
         </Button>
       </div>
     </div>
   );
 }
 
-// --- Fit Twin: fit twins -------------------------------------------------
+// --- Fit Twin: fit twins (Layer 02) --------------------------------------
+// The twin cards are now filtered + sorted by what we already know.
+// Height drives the sort order (closest-to-user first). If we captured
+// the two closet anchors, the numeric sizes nudge which twin archetypes
+// dominate (e.g. petite denim < 26 → petite twin first).
 
-function FitTwinsScreen({ onSubmit }) {
+/** Parse a height string like "5'6\"" out of a twin's summary. */
+function twinHeightInches(t) {
+  const m = t.summary && t.summary.match(/(\d+)'(\d+)/);
+  if (!m) return null;
+  return Number(m[1]) * 12 + Number(m[2]);
+}
+
+function pickRelevantTwins(userHeightIn, closetAnchor) {
+  const scored = FIT_TWINS.map((t) => {
+    const th = twinHeightInches(t);
+    const heightDelta =
+      th != null && userHeightIn ? Math.abs(th - userHeightIn) : 99;
+    // Nudge petite twin up if bottom size is very small
+    let bias = 0;
+    const bottomSize = closetAnchor?.bottom?.size;
+    const bottomNum = bottomSize ? Number(bottomSize) : null;
+    if (bottomNum && bottomNum <= 25 && /petite/i.test(t.blurb)) bias -= 8;
+    if (bottomNum && bottomNum >= 30 && /straight|long/i.test(t.blurb)) bias -= 4;
+    return { twin: t, score: heightDelta + bias };
+  });
+  scored.sort((a, b) => a.score - b.score);
+  // Return top 4 (grid fits 2x2 on phone frame)
+  return scored.slice(0, 4).map((s) => s.twin);
+}
+
+function FitTwinsScreen({ onSubmit, essentials, closetAnchor }) {
+  const heightIn = essentials?.height_inches;
+  const heightLabel = essentials?.height_label;
+  const twins = pickRelevantTwins(heightIn, closetAnchor);
+  const noteBits = [];
+  if (heightLabel) noteBits.push(heightLabel);
+  if (closetAnchor?.top?.size) noteBits.push(`top ${closetAnchor.top.size}`);
+  if (closetAnchor?.bottom?.size)
+    noteBits.push(`bottom ${closetAnchor.bottom.size}`);
+
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
       <div className="px-5 pt-5 pb-3">
@@ -798,10 +1211,15 @@ function FitTwinsScreen({ onSubmit }) {
         <div className="text-[18px] font-semibold text-navy leading-tight tracking-tight">
           Which one is closest to you?
         </div>
+        {noteBits.length > 0 && (
+          <p className="text-[11px] text-ink-soft mt-1.5 leading-relaxed">
+            Shortlisted to match what we have on you · {noteBits.join(' · ')}.
+          </p>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto px-5 pb-4">
         <div className="grid grid-cols-2 gap-2.5">
-          {FIT_TWINS.map((t) => (
+          {twins.map((t) => (
             <button
               key={t.id}
               onClick={() =>
@@ -809,6 +1227,7 @@ function FitTwinsScreen({ onSubmit }) {
                   layer: 'fit_twins',
                   twin_id: t.id,
                   summary: t.summary,
+                  blurb: t.blurb,
                   signals: t.signals,
                 })
               }
@@ -899,216 +1318,6 @@ function SharpenScreen({ onSubmit }) {
   );
 }
 
-// --- Fit Twin: AR (webcam) ----------------------------------------------
-
-function ARScreen({ onSubmit, onSkip, heightInches }) {
-  const videoRef = useRef(null);
-  const [stream, setStream] = useState(null);
-  const [phase, setPhase] = useState('prompt'); // prompt | preview | capturing | analyzing | error
-  const [err, setErr] = useState(null);
-  const [preloadStarted, setPreloadStarted] = useState(false);
-
-  useEffect(() => {
-    return () => stopStream(stream);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream]);
-
-  async function begin() {
-    try {
-      // Kick off MediaPipe model download while the user frames up.
-      if (!preloadStarted) {
-        setPreloadStarted(true);
-        ensurePoseLandmarker().catch(() => {});
-      }
-      const s = await requestCameraStream();
-      setStream(s);
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-      }
-      setPhase('preview');
-    } catch (e) {
-      setErr(e.message || 'Camera unavailable');
-      setPhase('error');
-    }
-  }
-
-  async function capture() {
-    try {
-      setPhase('capturing');
-      const frame = captureFrame(videoRef.current);
-      setPhase('analyzing');
-      stopStream(stream);
-      setStream(null);
-
-      // Run MediaPipe Pose on the captured frame and derive real
-      // measurements from the landmarks + the user's known height.
-      let measurements = null;
-      try {
-        const img = new Image();
-        img.src = frame.dataUrl;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-        const pose = await detectPose(img);
-        if (pose && heightInches) {
-          measurements = deriveMeasurements(pose, heightInches);
-        }
-      } catch (poseErr) {
-        // Non-fatal — hand the agent the image regardless.
-        // eslint-disable-next-line no-console
-        console.warn('[ar] pose detection failed:', poseErr?.message || poseErr);
-      }
-
-      onSubmit({
-        layer: 'ar',
-        captured: true,
-        image_base64: frame.base64,
-        image_media_type: frame.mediaType,
-        measurements,
-        tailor_method: TAILOR_METHOD.name,
-      });
-    } catch (e) {
-      setErr(e.message || 'Capture failed');
-      setPhase('error');
-    }
-  }
-
-  if (phase === 'analyzing' || phase === 'capturing') {
-    return (
-      <div className="absolute inset-0 bg-navy text-white flex flex-col items-center justify-center text-center p-6">
-        <div className="relative w-36 h-36 mb-6">
-          <div className="absolute inset-0 rounded-full border-2 border-white/20" />
-          <div
-            className="absolute inset-0 rounded-full border-2 border-teal border-t-transparent animate-spin"
-            style={{ animationDuration: '1.4s' }}
-          />
-        </div>
-        <div className="text-[20px] font-semibold">
-          {phase === 'capturing' ? 'Capturing.' : 'Locking fit signal.'}
-        </div>
-        <div className="type-eyebrow text-white/70 mt-3">
-          tailor precision · 98%
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'error') {
-    return (
-      <div className="absolute inset-0 bg-surface flex flex-col p-5">
-        <Eyebrow>Fit Twin · layer 04</Eyebrow>
-        <div className="text-[18px] font-semibold text-navy leading-tight mt-1">
-          Couldn't open the camera.
-        </div>
-        <p className="text-[12.5px] text-ink-soft mt-2 leading-relaxed">
-          {err} — you can skip this layer and we'll still be at 95%.
-        </p>
-        <div className="mt-auto space-y-2">
-          <Button
-            variant="primary"
-            className="w-full justify-center"
-            onClick={begin}
-          >
-            <Icon name="sparkle" /> Try again
-          </Button>
-          <button
-            onClick={onSkip}
-            className="w-full text-center text-[12px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
-          >
-            Skip this layer
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (phase === 'preview') {
-    return (
-      <div className="absolute inset-0 bg-navy flex flex-col">
-        <div className="px-5 pt-5 pb-2 text-white">
-          <Eyebrow className="text-white/80">Fit Twin · layer 04</Eyebrow>
-          <div className="text-[18px] font-semibold leading-tight mt-1">
-            Step back until you're fully in frame.
-          </div>
-        </div>
-        <div className="flex-1 relative bg-black/40 mx-5 my-3 rounded-md overflow-hidden border border-white/20">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="absolute inset-0 w-full h-full object-cover scale-x-[-1]"
-          />
-          <div className="absolute inset-6 rounded-md border-2 border-teal/60 pointer-events-none" />
-        </div>
-        <div className="px-5 pb-5 pt-2 space-y-2">
-          <Button
-            variant="primary"
-            className="w-full justify-center"
-            onClick={capture}
-          >
-            <Icon name="sparkle" /> Capture
-          </Button>
-          <button
-            onClick={onSkip}
-            className="w-full text-center text-[12px] text-white/70 py-1.5 hover:text-white font-bold uppercase tracking-[0.08em]"
-          >
-            Skip — my Fit Twin has me at 95%
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // phase === 'prompt'
-  return (
-    <div className="absolute inset-0 bg-surface flex flex-col">
-      <div className="px-5 pt-5 pb-3">
-        <div className="flex items-center justify-between mb-2">
-          <Eyebrow>Fit Twin · layer 04</Eyebrow>
-          <Badge tone="lime">Premium · +98%</Badge>
-        </div>
-        <div className="text-[20px] font-semibold text-navy leading-tight tracking-tight">
-          Tailor-level precision.
-        </div>
-      </div>
-      <div className="flex-1 px-5 pb-5 flex flex-col">
-        <div className="relative flex-1 rounded-md border border-outline-variant overflow-hidden bg-navy text-white flex flex-col items-center justify-center p-6 ph-tex ph-10">
-          <div className="absolute inset-0 bg-gradient-to-b from-navy/40 to-navy/70 pointer-events-none" />
-          <div className="relative text-center max-w-[240px]">
-            <div className="w-16 h-16 rounded-full bg-white/15 flex items-center justify-center mx-auto mb-4 border border-white/30">
-              <Icon name="sparkle" size={24} className="text-white" />
-            </div>
-            <div className="text-[20px] font-semibold leading-tight">
-              Most clients don't need this.
-            </div>
-            <p className="text-[12.5px] text-white/85 mt-3 leading-relaxed">
-              But if your fit is tricky, one photo gets us to 98%. Your
-              camera stays in this tab — only the single frame goes to
-              the agent.
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 space-y-2">
-          <Button
-            variant="primary"
-            className="w-full justify-center"
-            onClick={begin}
-          >
-            <Icon name="sparkle" /> Open camera
-          </Button>
-          <button
-            onClick={onSkip}
-            className="w-full text-center text-[12px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
-          >
-            I'm good — Fit Twin has me at 95%
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // --- Fit Twin: budget ----------------------------------------------------
 
@@ -1241,33 +1450,39 @@ function BudgetScreen({ onSubmit }) {
 // Completion — celebratory reveal
 // ======================================================================
 
-function CompletionScreen({ persona, onRestart }) {
+function CompletionScreen({ persona, onRestart, fitAccuracy }) {
   const archetype =
     ARCHETYPES.find((a) => a.id === persona?.archetype_id) || ARCHETYPES[0];
+  const conf = persona?.confidence || 85;
+  const accuracy = fitAccuracy || 0;
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
-      <div className={cx('relative h-[40%] ph-tex', archetype.palette)}>
+      <div className={cx('relative h-[36%] ph-tex', archetype.palette)}>
         <div className="absolute inset-0 bg-gradient-to-b from-transparent to-surface" />
         <div className="absolute top-4 left-4 type-eyebrow text-white/90 bloom">
           Welcome to the family
         </div>
+        {/* Tailored Fit Accuracy — top-right corner */}
+        <div className="absolute top-4 right-4 bloom">
+          <div className="px-3 py-2 rounded bg-surface-lowest border border-outline-variant text-right">
+            <div className="type-eyebrow text-ink-soft">Tailored fit accuracy</div>
+            <div className="text-[22px] text-navy font-bold leading-none tabular-nums mt-1">
+              {accuracy}%
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="px-6 pt-2 pb-6 flex-1 flex flex-col bloom">
+      <div className="px-6 pt-3 pb-6 flex-1 flex flex-col bloom">
         <Eyebrow className="text-lime-700">Your StyleFile is live</Eyebrow>
         <h2 className="type-headline-lg text-navy leading-[0.95] mt-2">
           {archetype.name}
         </h2>
+        <div className="mt-2">
+          <Badge tone="teal">{conf}% confidence</Badge>
+        </div>
         <p className="italic text-[15px] leading-snug text-ink-soft mt-3">
           {persona?.persona_summary || archetype.tagline}
         </p>
-        <div className="mt-4 flex items-center gap-2">
-          <Badge tone="teal">
-            {persona?.confidence || 85}% confidence
-          </Badge>
-          <Badge tone="outline">
-            Saved to your StyleFile
-          </Badge>
-        </div>
         <div className="mt-auto pt-4 space-y-2">
           <Button variant="primary" className="w-full justify-center">
             <Icon name="sparkle" /> Schedule your first Fix
@@ -1523,13 +1738,22 @@ function MemorySidebar({ signals, persona, interactions }) {
             {signals.fitTwin?.closet_anchor && (
               <div>
                 <div className="type-eyebrow text-ink-soft mb-1">
-                  Closet anchor
+                  Closet anchors
                 </div>
-                <div className="text-navy">
-                  {signals.fitTwin.closet_anchor.brand} ·{' '}
-                  {signals.fitTwin.closet_anchor.name} · size{' '}
-                  {signals.fitTwin.closet_anchor.size}
-                </div>
+                {signals.fitTwin.closet_anchor.top && (
+                  <div className="text-navy">
+                    Top · {signals.fitTwin.closet_anchor.top.brand}{' '}
+                    {signals.fitTwin.closet_anchor.top.name} (
+                    {signals.fitTwin.closet_anchor.top.size})
+                  </div>
+                )}
+                {signals.fitTwin.closet_anchor.bottom && (
+                  <div className="text-navy mt-0.5">
+                    Bottom · {signals.fitTwin.closet_anchor.bottom.brand}{' '}
+                    {signals.fitTwin.closet_anchor.bottom.name} (
+                    {signals.fitTwin.closet_anchor.bottom.size})
+                  </div>
+                )}
               </div>
             )}
             {signals.fitTwin?.fit_twins && (
@@ -1786,12 +2010,6 @@ export default function OnboardingSimulator() {
     });
   }
 
-  function skipAR() {
-    // Treat skip as a tool_result that says layer=ar, skipped=true.
-    // That gives the agent the signal that the user opted out.
-    submitResult({ layer: 'ar', skipped: true });
-  }
-
   function restart() {
     orchRef.current?.abort();
     setPhase('idle');
@@ -1817,7 +2035,13 @@ export default function OnboardingSimulator() {
       return <WelcomeScreen thinking={false} />;
     }
     if (phase === 'complete' && persona) {
-      return <CompletionScreen persona={persona} onRestart={restart} />;
+      return (
+        <CompletionScreen
+          persona={persona}
+          onRestart={restart}
+          fitAccuracy={computeFitAccuracy(signals)}
+        />
+      );
     }
     if (phase === 'error') {
       return (
@@ -1848,7 +2072,7 @@ export default function OnboardingSimulator() {
         return <ThisOrThatScreen pair={pair} onSubmit={submitResult} />;
       }
       case 'show_mood_board':
-        return <MoodBoardScreen onSubmit={submitResult} />;
+        return <TasteTransferScreen onSubmit={submitResult} />;
       case 'show_chat_message':
         return (
           <ChatMessageScreen
@@ -1869,15 +2093,23 @@ export default function OnboardingSimulator() {
           case 'closet_anchor':
             return <ClosetAnchorScreen onSubmit={submitResult} />;
           case 'fit_twins':
-            return <FitTwinsScreen onSubmit={submitResult} />;
+            return (
+              <FitTwinsScreen
+                onSubmit={submitResult}
+                essentials={signals.essentials}
+                closetAnchor={signals.fitTwin?.closet_anchor}
+              />
+            );
           case 'sharpen':
             return <SharpenScreen onSubmit={submitResult} />;
           case 'ar':
+            // Legacy: if Claude still calls this directly, route to the
+            // unified Final Precision screen so the camera button is the
+            // same one we show for the tailor-offer flow.
             return (
-              <ARScreen
+              <FinalPrecisionScreen
                 heightInches={signals.essentials?.height_inches}
                 onSubmit={submitResult}
-                onSkip={skipAR}
               />
             );
           case 'budget':
@@ -1887,7 +2119,12 @@ export default function OnboardingSimulator() {
         }
       }
       case 'show_tailor_precision_offer':
-        return <TailorPrecisionOfferScreen onSubmit={submitResult} />;
+        return (
+          <FinalPrecisionScreen
+            heightInches={signals.essentials?.height_inches}
+            onSubmit={submitResult}
+          />
+        );
       default:
         return <WelcomeScreen thinking />;
     }
@@ -1976,6 +2213,8 @@ function humanizeResult(toolName, result) {
     return `Chose ${result.chose?.toUpperCase()} — ${result.chose_label}`;
   }
   if (toolName === 'show_mood_board') {
+    if (result.mode === 'instagram_handle') return `Instagram handle: @${result.handle}`;
+    if (result.mode === 'celeb') return `Taste icon: ${result.name}`;
     return `Picked mood: ${result.mood_title}`;
   }
   if (toolName === 'show_chat_message') {
@@ -1987,8 +2226,11 @@ function humanizeResult(toolName, result) {
   if (toolName === 'show_fit_twin_layer') {
     if (result.layer === 'essentials')
       return `Essentials: ${result.segment} · ${result.height_label} · shoe ${result.shoe_size}`;
-    if (result.layer === 'closet_anchor')
-      return `Anchor: ${result.brand} ${result.name} (size ${result.size})`;
+    if (result.layer === 'closet_anchor') {
+      const t = result.top;
+      const b = result.bottom;
+      return `Anchors: ${t?.brand} ${t?.name} (${t?.size}) + ${b?.brand} ${b?.name} (${b?.size})`;
+    }
     if (result.layer === 'fit_twins') return `Fit twin: ${result.summary}`;
     if (result.layer === 'sharpen')
       return `Sharpen: ${result.chose_label}`;
@@ -2004,7 +2246,12 @@ function humanizeResult(toolName, result) {
       return `Allowance: ${result.band_label}, ${result.fix_size}-item Fix`;
   }
   if (toolName === 'show_tailor_precision_offer') {
-    return result.accepted ? 'Yes — go premium' : 'No thanks, finish with 95%';
+    if (!result.accepted) return 'Skipped tailor precision — finishing with 95%';
+    if (result.measurements) {
+      const m = result.measurements;
+      return `Captured · shoulders ${m.shoulder_width_in}" · torso ${m.torso_length_in}" · inseam ${m.inseam_in}"`;
+    }
+    return 'Accepted and captured tailor frame';
   }
   return JSON.stringify(result).slice(0, 80);
 }
@@ -2067,4 +2314,18 @@ function countFitTwinDepth(signals) {
     if (ft[k]) n += 1;
   });
   return n;
+}
+
+/** Derive the tailored-fit accuracy % from which Fit Twin layers completed.
+ *  Mirrors ACCURACY_LADDER in fit-twin-data.js. */
+function computeFitAccuracy(signals) {
+  if (!signals) return 0;
+  const ft = signals.fitTwin || {};
+  const tailor = signals.tailorOffer;
+  if (tailor?.accepted && tailor?.measurements) return 98;
+  if (ft.sharpen) return 95;
+  if (ft.fit_twins) return 90;
+  if (ft.closet_anchor) return 85;
+  if (signals.essentials) return 40;
+  return 0;
 }

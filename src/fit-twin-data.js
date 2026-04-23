@@ -305,7 +305,6 @@ export const ESSENTIALS_CONFIG = {
     { id: 'Women', label: 'Women', note: "Women's clothing" },
     { id: 'Men', label: 'Men', note: "Men's clothing" },
     { id: 'Kids', label: 'Kids', note: "Kids' clothing" },
-    { id: 'All', label: 'All', note: 'Mix — Women & Men' },
   ],
   // Heights in inches → we render nicely and use the raw inches for
   // downstream measurement math (MediaPipe Pose scaling).
@@ -318,7 +317,6 @@ export const ESSENTIALS_CONFIG = {
     Women: ['5', '5.5', '6', '6.5', '7', '7.5', '8', '8.5', '9', '9.5', '10', '11', '12'],
     Men: ['7', '7.5', '8', '8.5', '9', '9.5', '10', '10.5', '11', '11.5', '12', '13', '14'],
     Kids: ['10T', '11T', '12T', '13T', '1', '2', '3', '4', '5', '6'],
-    All: ['5', '6', '7', '8', '9', '10', '11', '12'],
   },
 };
 
