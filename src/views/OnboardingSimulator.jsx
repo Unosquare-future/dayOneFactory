@@ -783,71 +783,196 @@ function EssentialsScreen({ onSubmit }) {
 // The submit payload includes either { accepted:false } OR
 // { accepted:true, captured, image_base64, measurements }.
 
+/** Run MediaPipe Pose on a dataURL frame + derive measurements. */
+async function poseMeasurementsFromDataUrl(dataUrl, heightInches) {
+  const img = new Image();
+  img.src = dataUrl;
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = reject;
+  });
+  const pose = await detectPose(img);
+  if (!pose) return null;
+  return deriveMeasurements(pose, heightInches);
+}
+
+/** File-upload → dataURL helper for image files. */
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('File read failed'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function MeasurementChips({ m }) {
+  if (!m) return null;
+  const chips = [
+    m.shoulder_width_in != null ? `SHOULDERS ${m.shoulder_width_in}"` : null,
+    m.torso_length_in != null ? `TORSO ${m.torso_length_in}"` : null,
+    m.inseam_in != null ? `INSEAM ${m.inseam_in}"` : null,
+    m.arm_length_in != null ? `ARM ${m.arm_length_in}"` : null,
+  ].filter(Boolean);
+  return (
+    <div className="flex flex-wrap justify-center gap-1.5">
+      {chips.map((c) => (
+        <span
+          key={c}
+          className="px-2 py-1 rounded bg-white/15 border border-white/30 text-[10.5px] font-bold tabular-nums tracking-[0.08em] text-white"
+        >
+          {c}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Merge front + side measurement sets — side view adds depth signals. */
+function mergeMeasurements(front, side) {
+  if (!front && !side) return null;
+  if (!front) return side;
+  if (!side) return front;
+  // Average the two for better accuracy; keep max confidence
+  const avg = (a, b) =>
+    a != null && b != null ? Math.round(((a + b) / 2) * 10) / 10 : a ?? b;
+  return {
+    shoulder_width_in: avg(front.shoulder_width_in, side.shoulder_width_in),
+    torso_length_in: avg(front.torso_length_in, side.torso_length_in),
+    inseam_in: avg(front.inseam_in, side.inseam_in),
+    arm_length_in: avg(front.arm_length_in, side.arm_length_in),
+    height_reference_in: front.height_reference_in || side.height_reference_in,
+    confidence: Math.max(front.confidence || 0, side.confidence || 0),
+    method: `${front.method || TAILOR_METHOD.name} (front+side)`,
+  };
+}
+
 function FinalPrecisionScreen({ onSubmit, heightInches }) {
   const videoRef = useRef(null);
+  const frontFileRef = useRef(null);
+  const sideFileRef = useRef(null);
   const [stream, setStream] = useState(null);
-  const [phase, setPhase] = useState('prompt'); // prompt | preview | capturing | analyzing | error
+  // prompt | preview | capturing | analyzing | results | error
+  const [phase, setPhase] = useState('prompt');
   const [err, setErr] = useState(null);
+  // Uploaded / captured frames for combine
+  const [frontFrame, setFrontFrame] = useState(null); // { dataUrl, base64, mediaType, measurements }
+  const [sideFrame, setSideFrame] = useState(null);
 
   useEffect(() => {
-    // Cleanup when the screen unmounts
     return () => stopStream(stream);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream]);
 
   async function openCamera() {
+    setErr(null);
     try {
-      // Preload the MediaPipe model in the background while the user
-      // lines up the shot — by the time they hit Capture it's ready.
       ensurePoseLandmarker().catch(() => {});
       const s = await requestCameraStream();
       if (videoRef.current) videoRef.current.srcObject = s;
       setStream(s);
       setPhase('preview');
     } catch (e) {
-      setErr(e.message || 'Camera unavailable');
+      // eslint-disable-next-line no-console
+      console.error('[final-precision] camera open failed', e);
+      // Differentiate common error cases for clearer UI copy
+      const msg = e?.name === 'NotAllowedError'
+        ? 'Camera permission was denied. You can grant it in your browser site settings, or upload a photo instead.'
+        : e?.name === 'NotFoundError'
+          ? 'No camera found on this device. Upload a photo instead.'
+          : e?.message || 'Camera unavailable';
+      setErr(msg);
       setPhase('error');
     }
   }
 
-  async function capture() {
+  async function captureFromStream() {
     try {
       setPhase('capturing');
       const frame = captureFrame(videoRef.current);
       setPhase('analyzing');
       stopStream(stream);
       setStream(null);
-
       let measurements = null;
       try {
-        const img = new Image();
-        img.src = frame.dataUrl;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-        const pose = await detectPose(img);
-        if (pose && heightInches) {
-          measurements = deriveMeasurements(pose, heightInches);
+        if (heightInches) {
+          measurements = await poseMeasurementsFromDataUrl(frame.dataUrl, heightInches);
         }
       } catch (poseErr) {
-        // Non-fatal — still submit the frame
         // eslint-disable-next-line no-console
-        console.warn('[final-precision] pose detect failed:', poseErr?.message || poseErr);
+        console.warn('[final-precision] pose failed:', poseErr?.message || poseErr);
       }
-
-      onSubmit({
-        accepted: true,
-        captured: true,
-        image_base64: frame.base64,
-        image_media_type: frame.mediaType,
-        measurements,
-        tailor_method: TAILOR_METHOD.name,
-      });
+      const payload = { ...frame, measurements, source: 'camera' };
+      // Treat camera capture as the "front" frame.
+      setFrontFrame(payload);
+      setPhase('results');
     } catch (e) {
       setErr(e.message || 'Capture failed');
       setPhase('error');
     }
+  }
+
+  async function handleUpload(which, fileList) {
+    if (!fileList || !fileList.length) return;
+    const file = fileList[0];
+    if (!file.type.startsWith('image/')) {
+      setErr('That file is not an image. JPG/PNG work best.');
+      setPhase('error');
+      return;
+    }
+    try {
+      setPhase('analyzing');
+      setErr(null);
+      ensurePoseLandmarker().catch(() => {});
+      const dataUrl = await fileToDataUrl(file);
+      const base64 = dataUrl.split(',')[1];
+      let measurements = null;
+      try {
+        if (heightInches) {
+          measurements = await poseMeasurementsFromDataUrl(dataUrl, heightInches);
+        }
+      } catch (poseErr) {
+        // eslint-disable-next-line no-console
+        console.warn('[final-precision] pose (upload) failed:', poseErr?.message || poseErr);
+      }
+      const payload = {
+        dataUrl,
+        base64,
+        mediaType: file.type || 'image/jpeg',
+        measurements,
+        source: 'upload',
+      };
+      if (which === 'front') setFrontFrame(payload);
+      else setSideFrame(payload);
+      setPhase('results');
+    } catch (e) {
+      setErr(e.message || 'Upload failed');
+      setPhase('error');
+    }
+  }
+
+  function triggerFileInput(which) {
+    const ref = which === 'front' ? frontFileRef : sideFileRef;
+    ref.current?.click();
+  }
+
+  function finalizeAndSubmit() {
+    const merged = mergeMeasurements(
+      frontFrame?.measurements,
+      sideFrame?.measurements,
+    );
+    // Prefer the front image as the one we ship to Claude Vision.
+    const src = frontFrame || sideFrame;
+    onSubmit({
+      accepted: true,
+      captured: true,
+      image_base64: src?.base64,
+      image_media_type: src?.mediaType,
+      second_image_base64: frontFrame && sideFrame ? sideFrame.base64 : null,
+      measurements: merged,
+      source: frontFrame && sideFrame ? 'front+side' : src?.source || 'camera',
+      tailor_method: TAILOR_METHOD.name,
+    });
   }
 
   function skip() {
@@ -856,17 +981,25 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
     onSubmit({ accepted: false });
   }
 
-  if (phase === 'capturing' || phase === 'analyzing') {
+  function resetAll() {
+    setFrontFrame(null);
+    setSideFrame(null);
+    setErr(null);
+    setPhase('prompt');
+  }
+
+  // ---- phase: analyzing / capturing (loading) -----------------------
+  if (phase === 'analyzing' || phase === 'capturing') {
     return (
       <div className="absolute inset-0 bg-navy text-white flex flex-col items-center justify-center text-center p-6">
-        <div className="relative w-36 h-36 mb-6">
+        <div className="relative w-32 h-32 mb-6">
           <div className="absolute inset-0 rounded-full border-2 border-white/20" />
           <div
             className="absolute inset-0 rounded-full border-2 border-teal border-t-transparent animate-spin"
             style={{ animationDuration: '1.4s' }}
           />
         </div>
-        <div className="text-[20px] font-semibold">
+        <div className="text-[19px] font-semibold">
           {phase === 'capturing' ? 'Capturing.' : 'Locking fit signal.'}
         </div>
         <div className="type-eyebrow text-white/70 mt-3">
@@ -876,27 +1009,30 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
     );
   }
 
+  // ---- phase: error ------------------------------------------------
   if (phase === 'error') {
     return (
       <div className="absolute inset-0 bg-surface flex flex-col p-5">
         <div className="flex items-center justify-between mb-2">
-          <Eyebrow>Optional · before we wrap</Eyebrow>
+          <Eyebrow>Optional · final step</Eyebrow>
           <Badge tone="outline">Camera unavailable</Badge>
         </div>
         <div className="text-[17px] font-semibold text-navy leading-tight">
           Couldn't open the camera.
         </div>
         <p className="text-[12px] text-ink-soft mt-2 leading-relaxed">
-          {err} — this is usually a browser permission prompt. You can
-          retry or skip and we'll wrap with 95% fit accuracy.
+          {err}
         </p>
         <div className="mt-auto space-y-2">
+          <Button variant="primary" className="w-full justify-center" onClick={openCamera}>
+            <Icon name="sparkle" /> Try camera again
+          </Button>
           <Button
-            variant="primary"
+            variant="secondary"
             className="w-full justify-center"
-            onClick={openCamera}
+            onClick={() => triggerFileInput('front')}
           >
-            <Icon name="sparkle" /> Try again
+            <Icon name="plus" /> Upload a photo instead
           </Button>
           <button
             onClick={skip}
@@ -905,10 +1041,27 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
             Skip — finish with 95%
           </button>
         </div>
+        {/* Hidden file inputs for upload path */}
+        <input
+          ref={frontFileRef}
+          type="file"
+          accept="image/*"
+          capture="user"
+          className="hidden"
+          onChange={(e) => handleUpload('front', e.target.files)}
+        />
+        <input
+          ref={sideFileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => handleUpload('side', e.target.files)}
+        />
       </div>
     );
   }
 
+  // ---- phase: preview (camera live) ---------------------------------
   if (phase === 'preview') {
     return (
       <div className="absolute inset-0 bg-navy flex flex-col">
@@ -929,11 +1082,7 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
           <div className="absolute inset-6 rounded-md border-2 border-teal/60 pointer-events-none" />
         </div>
         <div className="px-5 pb-5 pt-2 space-y-2">
-          <Button
-            variant="primary"
-            className="w-full justify-center"
-            onClick={capture}
-          >
+          <Button variant="primary" className="w-full justify-center" onClick={captureFromStream}>
             <Icon name="sparkle" /> Capture
           </Button>
           <button
@@ -947,7 +1096,142 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
     );
   }
 
-  // phase === 'prompt'
+  // ---- phase: results (one or both frames captured / uploaded) -----
+  if (phase === 'results') {
+    const merged = mergeMeasurements(
+      frontFrame?.measurements,
+      sideFrame?.measurements,
+    );
+    return (
+      <div className="absolute inset-0 bg-surface flex flex-col">
+        <div className="px-5 pt-5 pb-3">
+          <div className="flex items-center justify-between mb-2">
+            <Eyebrow>Tailor-level precision</Eyebrow>
+            <Badge tone="teal">
+              {frontFrame && sideFrame ? 'Front + side' : 'Front'}
+            </Badge>
+          </div>
+          <div className="text-[17px] font-semibold text-navy leading-tight tracking-tight">
+            {merged
+              ? 'Your fit signal is locked.'
+              : 'Captured — pose was unclear, still usable.'}
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-3">
+          {/* Front preview */}
+          <div className="relative rounded-md overflow-hidden border border-outline-variant bg-surface-high h-40">
+            {frontFrame ? (
+              <img
+                src={frontFrame.dataUrl}
+                alt="Front frame"
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            ) : (
+              <div className="absolute inset-0 flex items-center justify-center type-eyebrow text-ink-soft">
+                no front frame
+              </div>
+            )}
+            <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-surface-lowest/90 border border-outline-variant text-[9.5px] font-bold uppercase tracking-[0.12em] text-navy">
+              Front
+            </div>
+          </div>
+
+          {/* Side preview (optional) */}
+          {sideFrame ? (
+            <div className="relative rounded-md overflow-hidden border border-outline-variant bg-surface-high h-40">
+              <img
+                src={sideFrame.dataUrl}
+                alt="Side frame"
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+              <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-surface-lowest/90 border border-outline-variant text-[9.5px] font-bold uppercase tracking-[0.12em] text-navy">
+                Side
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => triggerFileInput('side')}
+              className="w-full rounded-md border border-dashed border-outline-variant p-4 flex items-center gap-3 hover:border-navy transition-colors text-left"
+            >
+              <div className="w-10 h-10 rounded bg-surface-base flex items-center justify-center text-ink-soft">
+                <Icon name="plus" />
+              </div>
+              <div className="flex-1">
+                <div className="text-[13px] text-navy font-semibold">
+                  Add a side-view photo (optional)
+                </div>
+                <div className="text-[11px] text-ink-soft mt-0.5">
+                  Sharpens depth signal — shoulders, inseam
+                </div>
+              </div>
+            </button>
+          )}
+
+          {/* Measurement readout */}
+          {merged ? (
+            <div className="rounded-md bg-navy p-4 text-white ph-tex ph-10 relative overflow-hidden">
+              <div className="absolute inset-0 bg-navy/85" />
+              <div className="relative">
+                <div className="type-eyebrow text-white/70 mb-2">
+                  Derived measurements
+                </div>
+                <MeasurementChips m={merged} />
+                <div className="type-eyebrow text-white/50 mt-3">
+                  {TAILOR_METHOD.name} · height ref{' '}
+                  {merged.height_reference_in || heightInches || '?'}"
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-[11.5px] text-ink-soft italic px-2">
+              Pose wasn't fully readable in the frame. We'll still pass
+              the photo to the agent — try a clearer full-body shot if
+              you'd like to unlock the measurement chips.
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 pb-5 pt-3 border-t border-outline-variant space-y-2">
+          <Button variant="primary" className="w-full justify-center" onClick={finalizeAndSubmit}>
+            <Icon name="check" /> Use this — finish with 98%
+          </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={resetAll}
+              className="text-[11px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
+            >
+              Retake
+            </button>
+            <button
+              onClick={skip}
+              className="text-[11px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
+            >
+              Skip instead
+            </button>
+          </div>
+        </div>
+
+        <input
+          ref={frontFileRef}
+          type="file"
+          accept="image/*"
+          capture="user"
+          className="hidden"
+          onChange={(e) => handleUpload('front', e.target.files)}
+        />
+        <input
+          ref={sideFileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => handleUpload('side', e.target.files)}
+        />
+      </div>
+    );
+  }
+
+  // ---- phase: prompt (initial offer) --------------------------------
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
       <div className="px-5 pt-5 pb-3">
@@ -967,7 +1251,7 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
               <Icon name="sparkle" size={22} className="text-white" />
             </div>
             <div className="text-[18px] font-semibold leading-tight">
-              One selfie unlocks 98% fit.
+              One photo unlocks 98% fit.
             </div>
             <p className="text-[12px] text-white/85 mt-3 leading-relaxed">
               Powered by {TAILOR_METHOD.name} — runs locally in this tab.
@@ -981,12 +1265,15 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
         </div>
       </div>
       <div className="px-5 pb-5 pt-3 border-t border-outline-variant space-y-2">
-        <Button
-          variant="primary"
-          className="w-full justify-center"
-          onClick={openCamera}
-        >
+        <Button variant="primary" className="w-full justify-center" onClick={openCamera}>
           <Icon name="sparkle" /> Open camera
+        </Button>
+        <Button
+          variant="secondary"
+          className="w-full justify-center"
+          onClick={() => triggerFileInput('front')}
+        >
+          <Icon name="plus" /> Upload a photo
         </Button>
         <button
           onClick={skip}
@@ -995,6 +1282,24 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
           Skip — finish with 95%
         </button>
       </div>
+
+      {/* File inputs live here too so the user can upload from the prompt
+          screen without going through an error state first. */}
+      <input
+        ref={frontFileRef}
+        type="file"
+        accept="image/*"
+        capture="user"
+        className="hidden"
+        onChange={(e) => handleUpload('front', e.target.files)}
+      />
+      <input
+        ref={sideFileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => handleUpload('side', e.target.files)}
+      />
     </div>
   );
 }
@@ -1208,16 +1513,16 @@ function pickRelevantTwins(userHeightIn, closetAnchor) {
 function FitTwinsScreen({ onSubmit, essentials, closetAnchor }) {
   const heightIn = essentials?.height_inches;
   const heightLabel = essentials?.height_label;
+  const segment = essentials?.segment;
+  const shoe = essentials?.shoe_size;
   const twins = pickRelevantTwins(heightIn, closetAnchor);
-  const noteBits = [];
-  if (heightLabel) noteBits.push(heightLabel);
-  if (closetAnchor?.top?.size) noteBits.push(`top ${closetAnchor.top.size}`);
-  if (closetAnchor?.bottom?.size)
-    noteBits.push(`bottom ${closetAnchor.bottom.size}`);
+
+  // The closest twin by height sets the "best match" visual signal.
+  const bestMatchId = twins[0]?.id;
 
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
-      <div className="px-5 pt-5 pb-3">
+      <div className="px-5 pt-5 pb-2">
         <div className="flex items-center justify-between mb-2">
           <Eyebrow>Fit Twin · layer 02</Eyebrow>
           <Badge tone="teal">+90%</Badge>
@@ -1225,43 +1530,86 @@ function FitTwinsScreen({ onSubmit, essentials, closetAnchor }) {
         <div className="text-[18px] font-semibold text-navy leading-tight tracking-tight">
           Which one is closest to you?
         </div>
-        {noteBits.length > 0 && (
-          <p className="text-[11px] text-ink-soft mt-1.5 leading-relaxed">
-            Shortlisted to match what we have on you · {noteBits.join(' · ')}.
-          </p>
-        )}
       </div>
+
+      {/* Explicit "what we know about you" badge strip — so it's obvious
+          the agent IS using the captured essentials + closet anchors. */}
+      {(heightLabel || closetAnchor || segment) && (
+        <div className="mx-5 mb-3 rounded border border-teal bg-teal/10 px-3 py-2">
+          <Eyebrow className="text-teal-500 mb-1.5">
+            Shortlisted for you
+          </Eyebrow>
+          <div className="flex flex-wrap gap-1.5">
+            {segment && (
+              <span className="px-2 py-0.5 rounded bg-surface-lowest border border-outline-variant text-[10.5px] font-bold uppercase tracking-[0.08em] text-navy">
+                {segment}
+              </span>
+            )}
+            {heightLabel && (
+              <span className="px-2 py-0.5 rounded bg-surface-lowest border border-outline-variant text-[10.5px] font-bold uppercase tracking-[0.08em] text-navy tabular-nums">
+                {heightLabel}
+              </span>
+            )}
+            {shoe && (
+              <span className="px-2 py-0.5 rounded bg-surface-lowest border border-outline-variant text-[10.5px] font-bold uppercase tracking-[0.08em] text-navy tabular-nums">
+                shoe {shoe}
+              </span>
+            )}
+            {closetAnchor?.top?.size && (
+              <span className="px-2 py-0.5 rounded bg-surface-lowest border border-outline-variant text-[10.5px] font-bold uppercase tracking-[0.08em] text-navy tabular-nums">
+                top {closetAnchor.top.size}
+              </span>
+            )}
+            {closetAnchor?.bottom?.size && (
+              <span className="px-2 py-0.5 rounded bg-surface-lowest border border-outline-variant text-[10.5px] font-bold uppercase tracking-[0.08em] text-navy tabular-nums">
+                bottom {closetAnchor.bottom.size}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto px-5 pb-4">
         <div className="grid grid-cols-2 gap-2.5">
-          {twins.map((t) => (
-            <button
-              key={t.id}
-              onClick={() =>
-                onSubmit({
-                  layer: 'fit_twins',
-                  twin_id: t.id,
-                  summary: t.summary,
-                  blurb: t.blurb,
-                  signals: t.signals,
-                })
-              }
-              className={cx(
-                'relative text-left rounded-md overflow-hidden border p-3 min-h-[140px] ph-tex flex flex-col justify-end border-outline-variant hover:scale-[1.01]',
-                t.ph,
-              )}
-            >
-              <div className="absolute inset-0 bg-gradient-to-t from-navy/70 to-transparent" />
-              <div className="relative">
-                <div className="type-eyebrow text-white/80">{t.label}</div>
-                <div className="text-[13px] text-white font-semibold leading-tight mt-1">
-                  {t.summary}
+          {twins.map((t) => {
+            const isBestMatch = t.id === bestMatchId;
+            return (
+              <button
+                key={t.id}
+                onClick={() =>
+                  onSubmit({
+                    layer: 'fit_twins',
+                    twin_id: t.id,
+                    summary: t.summary,
+                    blurb: t.blurb,
+                    signals: t.signals,
+                    is_best_height_match: isBestMatch,
+                  })
+                }
+                className={cx(
+                  'relative text-left rounded-md overflow-hidden border p-3 min-h-[150px] ph-tex flex flex-col justify-end hover:scale-[1.01] transition-all',
+                  t.ph,
+                  isBestMatch ? 'border-teal ring-2 ring-teal' : 'border-outline-variant',
+                )}
+              >
+                <div className="absolute inset-0 bg-gradient-to-t from-navy/75 to-transparent" />
+                {isBestMatch && (
+                  <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded-sm bg-teal text-navy text-[8.5px] font-bold uppercase tracking-[0.12em]">
+                    Best match
+                  </div>
+                )}
+                <div className="relative">
+                  <div className="type-eyebrow text-white/80">{t.label}</div>
+                  <div className="text-[13px] text-white font-semibold leading-tight mt-1">
+                    {t.summary}
+                  </div>
+                  <p className="text-[10.5px] text-white/85 mt-1 leading-snug italic">
+                    {t.blurb}
+                  </p>
                 </div>
-                <p className="text-[10.5px] text-white/85 mt-1 leading-snug italic">
-                  {t.blurb}
-                </p>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -1476,23 +1824,26 @@ function CompletionScreen({ persona, onRestart, fitAccuracy }) {
         <div className="absolute top-4 left-4 type-eyebrow text-white/90 bloom">
           Welcome to the family
         </div>
-        {/* Tailored Fit Accuracy — top-right corner */}
-        <div className="absolute top-4 right-4 bloom">
-          <div className="px-3 py-2 rounded bg-surface-lowest border border-outline-variant text-right">
-            <div className="type-eyebrow text-ink-soft">Tailored fit accuracy</div>
-            <div className="text-[22px] text-navy font-bold leading-none tabular-nums mt-1">
-              {accuracy}%
-            </div>
-          </div>
-        </div>
       </div>
       <div className="px-6 pt-3 pb-6 flex-1 flex flex-col bloom">
         <Eyebrow className="text-lime-700">Your StyleFile is live</Eyebrow>
         <h2 className="type-headline-lg text-navy leading-[0.95] mt-2">
           {archetype.name}
         </h2>
-        <div className="mt-2">
-          <Badge tone="teal">{conf}% confidence</Badge>
+        {/* Confidence + Tailored Fit Accuracy, side-by-side in the same style. */}
+        <div className="mt-3 flex flex-wrap items-stretch gap-2">
+          <div className="px-3 py-2 rounded border border-outline-variant bg-surface-lowest min-w-[110px]">
+            <div className="type-eyebrow text-ink-soft">Confidence</div>
+            <div className="text-[18px] text-navy font-bold leading-none tabular-nums mt-1">
+              {conf}%
+            </div>
+          </div>
+          <div className="px-3 py-2 rounded border border-outline-variant bg-surface-lowest min-w-[110px]">
+            <div className="type-eyebrow text-ink-soft">Tailored fit accuracy</div>
+            <div className="text-[18px] text-navy font-bold leading-none tabular-nums mt-1">
+              {accuracy}%
+            </div>
+          </div>
         </div>
         <p className="italic text-[15px] leading-snug text-ink-soft mt-3">
           {persona?.persona_summary || archetype.tagline}
