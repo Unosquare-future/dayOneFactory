@@ -17,6 +17,7 @@ import RulesView from './views/Rules.jsx';
 import RouterView from './views/RouterView.jsx';
 import SimulationView from './views/Simulation.jsx';
 import ResultsView from './views/Results.jsx';
+import OnboardingSimulator from './views/OnboardingSimulator.jsx';
 import { FactoryProvider, useFactory } from './state.jsx';
 
 // -----------------------------------------------------------------------
@@ -211,8 +212,11 @@ function AppShell() {
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* Top-bar "+ Simulate" button is intentionally unwired for now — placeholder. */}
-      <TopNav view={view} setView={setView} onSimulate={() => {}} />
+      <TopNav
+        view={view}
+        setView={setView}
+        onSimulate={() => setView('onboarding')}
+      />
       {view === 'dashboard' && (
         <Dashboard
           onOpenVariant={openVariant}
@@ -228,6 +232,7 @@ function AppShell() {
         />
       )}
       {view === 'fittwin' && <FitTwinView />}
+      {view === 'onboarding' && <OnboardingSimulator />}
       {view === 'rules' && <RulesView />}
       {view === 'router' && <RouterView onSendToVariant={openVariant} />}
       {view === 'simulation' && <SimulationView />}
