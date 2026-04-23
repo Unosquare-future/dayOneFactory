@@ -104,22 +104,42 @@ export const AGENT_TOOLS = [
   {
     name: 'show_fit_twin_layer',
     description:
-      'Switch to a Fit Twin layer for measurement, fit preference, or budget capture. ' +
+      'Switch to a Fit Twin layer. Layers in accuracy order: ' +
+      'essentials = gender/segment + height + shoe size (unlocks segment-aware content — MUST be the first tool you ever call). ' +
       'closet_anchor = name a garment that fits (80% size signal). ' +
       'fit_twins = pick the client profile closest to you (90%). ' +
       'sharpen = 2 agent-generated disambiguators (95%). ' +
-      'ar = opt-in webcam scan (98%). ' +
-      'budget = Style Allowance slider + Fix size. Must be called at or near the end.',
+      'ar = MediaPipe Pose scan (98%) — only after show_tailor_precision_offer returns {accepted: true}. ' +
+      'budget = Style Allowance slider + Fix size. Always pair with a show_tailor_precision_offer before conclude.',
     input_schema: {
       type: 'object',
       properties: {
         layer: {
           type: 'string',
-          enum: ['closet_anchor', 'fit_twins', 'sharpen', 'ar', 'budget'],
+          enum: [
+            'essentials',
+            'closet_anchor',
+            'fit_twins',
+            'sharpen',
+            'ar',
+            'budget',
+          ],
         },
         reason: { type: 'string' },
       },
       required: ['layer', 'reason'],
+    },
+  },
+  {
+    name: 'show_tailor_precision_offer',
+    description:
+      'Explicitly ask the user whether they want tailor-level precision via MediaPipe Pose (takes ~60s, returns shoulder/torso/inseam measurements). Must be called near the end — before conclude_with_persona — regardless of whether the AR layer was called earlier. Tool result is {accepted: true|false}; if accepted, follow up with show_fit_twin_layer(ar), otherwise proceed to conclude_with_persona.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        reason: { type: 'string' },
+      },
+      required: ['reason'],
     },
   },
   {
@@ -177,5 +197,6 @@ export const TOOL_FAMILY = {
   show_chat_message: 'variant',
   show_classic_question: 'variant',
   show_fit_twin_layer: 'fittwin',
+  show_tailor_precision_offer: 'offer',
   conclude_with_persona: 'conclude',
 };

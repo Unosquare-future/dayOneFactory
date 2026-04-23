@@ -286,6 +286,7 @@ export const SHARPEN_COUNT = 2;
 
 export const ACCURACY_LADDER = {
   none: 0,
+  essentialsDone: 40,  // segment + height + shoe gives us a coarse posture
   closetOne: 80,
   closetTwo: 85,
   fitTwinPicked: 90,
@@ -293,8 +294,67 @@ export const ACCURACY_LADDER = {
   arDone: 98,
 };
 
+// ----- Essentials (Layer 00) --------------------------------------------
+// The fit-twin prerequisite: gender / shopping segment, height, shoe
+// size. These are cheap to ask and unlock segment-aware inventory
+// filtering for every downstream variant (Swipe deck, This-or-That
+// pairs, Budget previews).
+
+export const ESSENTIALS_CONFIG = {
+  segments: [
+    { id: 'Women', label: 'Women', note: "Women's clothing" },
+    { id: 'Men', label: 'Men', note: "Men's clothing" },
+    { id: 'Kids', label: 'Kids', note: "Kids' clothing" },
+    { id: 'All', label: 'All', note: 'Mix — Women & Men' },
+  ],
+  // Heights in inches → we render nicely and use the raw inches for
+  // downstream measurement math (MediaPipe Pose scaling).
+  heightInches: {
+    min: 48, // 4'0"
+    max: 80, // 6'8"
+    default: 66, // 5'6"
+  },
+  shoeSizes: {
+    Women: ['5', '5.5', '6', '6.5', '7', '7.5', '8', '8.5', '9', '9.5', '10', '11', '12'],
+    Men: ['7', '7.5', '8', '8.5', '9', '9.5', '10', '10.5', '11', '11.5', '12', '13', '14'],
+    Kids: ['10T', '11T', '12T', '13T', '1', '2', '3', '4', '5', '6'],
+    All: ['5', '6', '7', '8', '9', '10', '11', '12'],
+  },
+};
+
+/** Format inches as a feet/inches string: 66 → "5'6\"". */
+export function formatHeight(totalInches) {
+  const ft = Math.floor(totalInches / 12);
+  const inch = totalInches % 12;
+  return `${ft}'${inch}"`;
+}
+
+// ----- Tailor-precision method -------------------------------------------
+// We use MediaPipe Pose Landmarker (Google, Apache 2.0) for the opt-in
+// tailor-level scan. It runs entirely in the browser via WASM and
+// returns 33 body keypoints — from which we derive shoulder width,
+// torso length, and inseam using the user's height as the physical
+// reference. No SaaS, no per-scan cost, no PII leaves the tab except
+// the one frame we ship to the agent for vision-based sanity-check.
+
+export const TAILOR_METHOD = {
+  name: 'MediaPipe Pose Landmarker',
+  vendor: 'Google (Apache 2.0)',
+  accuracy: 98,
+  runtime: 'browser · WASM',
+};
+
 // Friendly labels for the layer sidebar / progress moments.
 export const LAYER_META = [
+  {
+    id: 'essentials',
+    n: '00',
+    title: 'Essentials',
+    sub: 'Gender, height, shoe size. 15 seconds.',
+    accuracy: 40,
+    required: true,
+    time: '15s',
+  },
   {
     id: 'closet',
     n: '01',
@@ -326,7 +386,7 @@ export const LAYER_META = [
     id: 'ar',
     n: '04',
     title: 'Tailor-level precision',
-    sub: 'Opt-in AR scan for tricky fits.',
+    sub: 'Opt-in pose scan via MediaPipe.',
     accuracy: 98,
     required: false,
     time: '60s',

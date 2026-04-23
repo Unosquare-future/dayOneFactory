@@ -28,13 +28,15 @@ const FUNCTION_NAME = 'agent';
 export class AgentOrchestrator {
   constructor({
     device = 'mobile',
-    softCap = 8,
+    softCap = 12,
     model = 'claude-sonnet-4-5',
+    sessionLead = null,
     onEvent = () => {},
   } = {}) {
     this.device = device;
     this.softCap = softCap;
     this.model = model;
+    this.sessionLead = sessionLead;
     this.onEvent = onEvent;
 
     // Conversation state
@@ -44,7 +46,7 @@ export class AgentOrchestrator {
     this.signals = {};        // accumulated capture (free-form)
     this.aborted = false;
 
-    this.system = buildSystemPrompt({ softCap, device });
+    this.system = buildSystemPrompt({ softCap, device, sessionLead });
   }
 
   /** Kick off the first turn. Claude opens with reasoning + a tool call. */
@@ -132,11 +134,6 @@ export class AgentOrchestrator {
       system: this.system,
       tools: AGENT_TOOLS,
       messages: this.messages,
-      metadata: {
-        device: this.device,
-        interactions: this.interactions,
-        soft_cap: this.softCap,
-      },
     };
 
     let assistantContent = [];
@@ -348,7 +345,16 @@ function mergeSignals(signals, toolName, result) {
     next.classic = next.classic || [];
     next.classic.push(result);
   } else if (toolName === 'show_fit_twin_layer') {
-    next.fitTwin = { ...(next.fitTwin || {}), [result.layer || 'unknown']: result };
+    if (result.layer === 'essentials') {
+      next.essentials = result;
+    } else {
+      next.fitTwin = {
+        ...(next.fitTwin || {}),
+        [result.layer || 'unknown']: result,
+      };
+    }
+  } else if (toolName === 'show_tailor_precision_offer') {
+    next.tailorOffer = result;
   }
   return next;
 }

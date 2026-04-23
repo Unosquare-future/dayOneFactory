@@ -30,15 +30,18 @@ import {
   ARCHETYPES,
   CLASSIC_QS,
   MOOD_BOARDS,
-  SWIPE_CARDS,
-  TOT_PAIRS,
 } from '../data.js';
 import {
   CLOSET_CATALOG,
+  ESSENTIALS_CONFIG,
   FIT_TWINS,
   SHARPEN_PAIRS,
+  TAILOR_METHOD,
+  formatHeight,
 } from '../fit-twin-data.js';
 import { AgentOrchestrator, TOOL_FAMILY } from '../agent/orchestrator.js';
+import { pickSessionLead } from '../agent/prompts.js';
+import { buildSwipeDeck, buildTotDeck } from '../agent/decks.js';
 import {
   getClientId,
   loadPersona,
@@ -51,8 +54,9 @@ import {
   requestCameraStream,
   stopStream,
 } from '../agent/camera.js';
+import { deriveMeasurements, detectPose, ensurePoseLandmarker } from '../agent/pose.js';
 
-const SOFT_CAP = 8;
+const SOFT_CAP = 12;
 const MODEL = 'claude-sonnet-4-5';
 
 // ======================================================================
@@ -151,12 +155,17 @@ function SwipeScreen({ card, onSubmit }) {
   function finish(liked) {
     onSubmit({
       swiped: liked ? 'yes' : 'no',
+      card_id: card.id,
       card_label: card.label,
+      brand: card.brand,
       tags: card.tags,
+      archetypes: card.archetypes,
     });
   }
 
   const rot = drag * 0.06;
+  const hasImage = !!card.imageUrl;
+
   return (
     <div className="absolute inset-0 bg-surface flex flex-col">
       <div className="px-5 pt-5 pb-3">
@@ -174,8 +183,7 @@ function SwipeScreen({ card, onSubmit }) {
         <div
           className={cx(
             'absolute left-5 right-5 top-4 bottom-4 rounded-xl overflow-hidden border border-outline-variant cursor-grab active:cursor-grabbing',
-            card.ph,
-            'ph-tex',
+            hasImage ? 'bg-surface-high' : cx('ph-tex', card.ph),
           )}
           style={{
             transform: `translateX(${drag}px) rotate(${rot}deg)`,
@@ -188,7 +196,15 @@ function SwipeScreen({ card, onSubmit }) {
           onTouchMove={onMove}
           onTouchEnd={onUp}
         >
-          <div className="absolute inset-0 bg-gradient-to-t from-navy/60 via-transparent to-transparent" />
+          {hasImage && (
+            <img
+              src={card.imageUrl}
+              alt={`${card.brand} ${card.label}`}
+              draggable={false}
+              className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-navy/65 via-transparent to-transparent pointer-events-none" />
           {drag > 40 && (
             <div className="absolute top-4 left-4 px-3 py-1.5 rounded border-2 border-teal-500 text-[10px] uppercase tracking-[0.14em] font-bold text-teal-500 bg-surface-lowest/90">
               Yes, please
@@ -200,12 +216,15 @@ function SwipeScreen({ card, onSubmit }) {
             </div>
           )}
           <div className="absolute bottom-4 left-4 right-4 text-white">
-            <div className="text-[20px] font-semibold leading-tight tracking-tight">
+            <div className="type-eyebrow text-white/80">{card.brand}</div>
+            <div className="text-[18px] font-semibold leading-tight tracking-tight mt-1">
               {card.label}
             </div>
-            <div className="mt-2 type-eyebrow text-white/80">
-              {card.tags.join(' · ')}
-            </div>
+            {card.subcategory && (
+              <div className="mt-2 type-eyebrow text-white/70">
+                {card.subcategory} · {card.tags.slice(0, 3).join(' · ')}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -238,7 +257,10 @@ function ThisOrThatScreen({ pair, onSubmit }) {
       () =>
         onSubmit({
           chose: side,
+          chose_id: pair[side].id,
           chose_label: pair[side].label,
+          chose_brand: pair[side].brand,
+          chose_archetype: pair[side].archetype,
           q: pair.q,
         }),
       260,
@@ -253,27 +275,45 @@ function ThisOrThatScreen({ pair, onSubmit }) {
         </div>
       </div>
       <div className="flex-1 px-5 py-3 grid grid-rows-2 gap-3">
-        {['a', 'b'].map((side) => (
-          <button
-            key={side}
-            onClick={() => pick(side)}
-            className={cx(
-              'relative rounded-md overflow-hidden ph-tex border transition-all text-left',
-              pair[side].ph,
-              flash === side
-                ? 'ring-4 ring-teal scale-[0.985] border-teal'
-                : 'border-outline-variant hover:scale-[1.01]',
-            )}
-          >
-            <div className="absolute inset-0 bg-gradient-to-t from-navy/55 to-transparent" />
-            <div className="absolute top-3 left-3 type-eyebrow text-white/80">
-              {side.toUpperCase()}
-            </div>
-            <div className="absolute bottom-3 left-3 right-3 text-[20px] font-semibold text-white leading-tight">
-              {pair[side].label}
-            </div>
-          </button>
-        ))}
+        {['a', 'b'].map((side) => {
+          const opt = pair[side];
+          const hasImage = !!opt.imageUrl;
+          return (
+            <button
+              key={side}
+              onClick={() => pick(side)}
+              className={cx(
+                'relative rounded-md overflow-hidden border transition-all text-left',
+                hasImage ? 'bg-surface-high' : cx('ph-tex', opt.ph),
+                flash === side
+                  ? 'ring-4 ring-teal scale-[0.985] border-teal'
+                  : 'border-outline-variant hover:scale-[1.01]',
+              )}
+            >
+              {hasImage && (
+                <img
+                  src={opt.imageUrl}
+                  alt={`${opt.brand} ${opt.label}`}
+                  className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-navy/60 via-transparent to-transparent pointer-events-none" />
+              <div className="absolute top-3 left-3 type-eyebrow text-white/80">
+                {side.toUpperCase()}
+              </div>
+              <div className="absolute bottom-3 left-3 right-3 text-white">
+                {opt.brand && (
+                  <div className="type-eyebrow text-white/80 mb-1">
+                    {opt.brand}
+                  </div>
+                )}
+                <div className="text-[17px] font-semibold leading-tight tracking-tight">
+                  {opt.label}
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
       <div className="text-center pb-4 type-eyebrow text-ink-soft">
         no wrong answer
@@ -422,6 +462,201 @@ function ClassicScreen({ question, onSubmit }) {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Fit Twin: essentials (Layer 00) ------------------------------------
+
+function EssentialsScreen({ onSubmit }) {
+  const [segment, setSegment] = useState(null);
+  const [heightIn, setHeightIn] = useState(ESSENTIALS_CONFIG.heightInches.default);
+  const [shoe, setShoe] = useState(null);
+
+  const shoeOptions = segment
+    ? ESSENTIALS_CONFIG.shoeSizes[segment] || ESSENTIALS_CONFIG.shoeSizes.All
+    : ESSENTIALS_CONFIG.shoeSizes.All;
+
+  const canContinue = !!segment && !!shoe;
+
+  function commit() {
+    if (!canContinue) return;
+    onSubmit({
+      layer: 'essentials',
+      segment,
+      height_inches: heightIn,
+      height_label: formatHeight(heightIn),
+      shoe_size: shoe,
+    });
+  }
+
+  return (
+    <div className="absolute inset-0 bg-surface flex flex-col">
+      <div className="px-5 pt-5 pb-3">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow>Fit Twin · layer 00</Eyebrow>
+          <Badge tone="teal">Essentials</Badge>
+        </div>
+        <div className="text-[19px] font-semibold text-navy leading-tight tracking-tight">
+          Three quick things to size you right.
+        </div>
+        <p className="text-[12px] text-ink-soft mt-2 leading-relaxed">
+          Gender, height, shoe size — the whole rest of the flow depends
+          on these.
+        </p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-5 pb-3 space-y-5">
+        <section>
+          <Eyebrow className="mb-2">Shopping for</Eyebrow>
+          <div className="grid grid-cols-2 gap-1.5">
+            {ESSENTIALS_CONFIG.segments.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  setSegment(s.id);
+                  setShoe(null);
+                }}
+                className={cx(
+                  'px-3 py-2.5 rounded text-left border transition-colors',
+                  segment === s.id
+                    ? 'bg-navy text-white border-navy'
+                    : 'bg-surface-lowest text-navy border-outline-variant hover:border-navy',
+                )}
+              >
+                <div className="text-[13px] font-bold uppercase tracking-[0.08em]">
+                  {s.label}
+                </div>
+                <div
+                  className={cx(
+                    'text-[10.5px] mt-0.5',
+                    segment === s.id ? 'text-white/75' : 'text-ink-soft',
+                  )}
+                >
+                  {s.note}
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <div className="flex items-baseline justify-between mb-2">
+            <Eyebrow>Height</Eyebrow>
+            <span className="text-[15px] text-navy font-bold tabular-nums">
+              {formatHeight(heightIn)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={ESSENTIALS_CONFIG.heightInches.min}
+            max={ESSENTIALS_CONFIG.heightInches.max}
+            step="1"
+            value={heightIn}
+            onChange={(e) => setHeightIn(Number(e.target.value))}
+            className="w-full accent-teal-500"
+            style={{ boxShadow: 'none' }}
+          />
+          <div className="flex items-center justify-between mt-1.5 type-eyebrow text-ink-soft">
+            <span>{formatHeight(ESSENTIALS_CONFIG.heightInches.min)}</span>
+            <span>{formatHeight(ESSENTIALS_CONFIG.heightInches.max)}</span>
+          </div>
+        </section>
+
+        <section>
+          <Eyebrow className="mb-2">
+            Shoe size{' '}
+            {segment && (
+              <span className="text-ink-soft/60 tracking-[0.08em] lowercase">
+                · {segment}
+              </span>
+            )}
+          </Eyebrow>
+          <div className="flex flex-wrap gap-1.5">
+            {shoeOptions.map((s) => (
+              <button
+                key={s}
+                onClick={() => setShoe(s)}
+                className={cx(
+                  'px-3 py-1.5 rounded text-[11px] font-bold tabular-nums border transition-colors',
+                  shoe === s
+                    ? 'bg-teal text-navy border-teal'
+                    : 'bg-surface-lowest text-navy border-outline-variant hover:border-navy',
+                )}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="px-5 pb-5 pt-3 border-t border-outline-variant">
+        <Button
+          variant="primary"
+          className="w-full justify-center"
+          onClick={commit}
+          disabled={!canContinue}
+        >
+          <Icon name="check" /> Continue
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Tailor-precision offer (pre-conclude) ------------------------------
+
+function TailorPrecisionOfferScreen({ onSubmit }) {
+  return (
+    <div className="absolute inset-0 bg-surface flex flex-col">
+      <div className="px-5 pt-5 pb-3">
+        <div className="flex items-center justify-between mb-2">
+          <Eyebrow>Optional · before we wrap</Eyebrow>
+          <Badge tone="lime">Premium · 98%</Badge>
+        </div>
+        <div className="text-[20px] font-semibold text-navy leading-tight tracking-tight">
+          Want tailor-level precision?
+        </div>
+      </div>
+
+      <div className="flex-1 px-5 pb-3 flex flex-col">
+        <div className="relative flex-1 rounded-md border border-outline-variant overflow-hidden bg-navy text-white flex flex-col items-center justify-center p-6 ph-tex ph-10">
+          <div className="absolute inset-0 bg-gradient-to-b from-navy/40 to-navy/80 pointer-events-none" />
+          <div className="relative text-center max-w-[240px]">
+            <div className="w-14 h-14 rounded-full bg-white/15 flex items-center justify-center mx-auto mb-4 border border-white/30">
+              <Icon name="sparkle" size={22} className="text-white" />
+            </div>
+            <div className="text-[18px] font-semibold leading-tight">
+              One selfie unlocks 98% fit accuracy.
+            </div>
+            <p className="text-[12px] text-white/85 mt-3 leading-relaxed">
+              Powered by {TAILOR_METHOD.name} — runs locally in this tab.
+              We capture shoulder width, torso length, and inseam from a
+              single frame combined with the height you just entered.
+            </p>
+            <p className="text-[10.5px] text-white/60 mt-2 italic">
+              {TAILOR_METHOD.vendor} · {TAILOR_METHOD.runtime}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-5 pb-5 pt-3 border-t border-outline-variant space-y-2">
+        <Button
+          variant="primary"
+          className="w-full justify-center"
+          onClick={() => onSubmit({ accepted: true })}
+        >
+          <Icon name="sparkle" /> Go premium · open camera
+        </Button>
+        <button
+          onClick={() => onSubmit({ accepted: false })}
+          className="w-full text-center text-[12px] text-ink-soft py-1.5 hover:text-navy font-bold uppercase tracking-[0.08em]"
+        >
+          I'm good — finish with 95%
+        </button>
       </div>
     </div>
   );
@@ -666,11 +901,12 @@ function SharpenScreen({ onSubmit }) {
 
 // --- Fit Twin: AR (webcam) ----------------------------------------------
 
-function ARScreen({ onSubmit, onSkip }) {
+function ARScreen({ onSubmit, onSkip, heightInches }) {
   const videoRef = useRef(null);
   const [stream, setStream] = useState(null);
   const [phase, setPhase] = useState('prompt'); // prompt | preview | capturing | analyzing | error
   const [err, setErr] = useState(null);
+  const [preloadStarted, setPreloadStarted] = useState(false);
 
   useEffect(() => {
     return () => stopStream(stream);
@@ -679,6 +915,11 @@ function ARScreen({ onSubmit, onSkip }) {
 
   async function begin() {
     try {
+      // Kick off MediaPipe model download while the user frames up.
+      if (!preloadStarted) {
+        setPreloadStarted(true);
+        ensurePoseLandmarker().catch(() => {});
+      }
       const s = await requestCameraStream();
       setStream(s);
       if (videoRef.current) {
@@ -696,16 +937,36 @@ function ARScreen({ onSubmit, onSkip }) {
       setPhase('capturing');
       const frame = captureFrame(videoRef.current);
       setPhase('analyzing');
-      // Submit the captured frame back to the agent for Vision analysis.
-      // The orchestrator uses this on the NEXT turn via a tool_result
-      // that includes the image; here we hand it off.
       stopStream(stream);
       setStream(null);
+
+      // Run MediaPipe Pose on the captured frame and derive real
+      // measurements from the landmarks + the user's known height.
+      let measurements = null;
+      try {
+        const img = new Image();
+        img.src = frame.dataUrl;
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+        const pose = await detectPose(img);
+        if (pose && heightInches) {
+          measurements = deriveMeasurements(pose, heightInches);
+        }
+      } catch (poseErr) {
+        // Non-fatal — hand the agent the image regardless.
+        // eslint-disable-next-line no-console
+        console.warn('[ar] pose detection failed:', poseErr?.message || poseErr);
+      }
+
       onSubmit({
         layer: 'ar',
         captured: true,
         image_base64: frame.base64,
         image_media_type: frame.mediaType,
+        measurements,
+        tailor_method: TAILOR_METHOD.name,
       });
     } catch (e) {
       setErr(e.message || 'Capture failed');
@@ -1213,6 +1474,16 @@ function MemorySidebar({ signals, persona, interactions }) {
           </div>
         ) : (
           <div className="space-y-3 text-[12.5px]">
+            {signals.essentials && (
+              <div>
+                <div className="type-eyebrow text-ink-soft mb-1">Essentials</div>
+                <div className="text-navy">
+                  {signals.essentials.segment} ·{' '}
+                  {signals.essentials.height_label} · shoe{' '}
+                  {signals.essentials.shoe_size}
+                </div>
+              </div>
+            )}
             {signals.swipes && (
               <div>
                 <div className="type-eyebrow text-ink-soft mb-1">Swipes</div>
@@ -1349,6 +1620,9 @@ export default function OnboardingSimulator() {
   const [thinking, setThinking] = useState(false);
   const [pendingTool, setPendingTool] = useState(null); // { id, name, input }
   const [reasoningBuffer, setReasoningBuffer] = useState('');
+  // Deck is null until the Essentials layer resolves the segment.
+  const [deck, setDeck] = useState({ swipe: [], tot: [], segment: null });
+  const [sessionLead, setSessionLead] = useState(null);
 
   const orchRef = useRef(null);
   const startedAtRef = useRef(null);
@@ -1450,16 +1724,24 @@ export default function OnboardingSimulator() {
     setSignals({});
     setPersona(null);
     setPendingTool(null);
+    setDeck({ swipe: [], tot: [], segment: null });
     toolPathRef.current = [];
     startedAtRef.current = new Date().toISOString();
+    const lead = pickSessionLead();
+    setSessionLead(lead);
     pushLog({
       kind: 'system',
       text: `Device: ${device} · model: ${MODEL} · soft cap: ${SOFT_CAP}`,
+    });
+    pushLog({
+      kind: 'system',
+      text: `Session lead variant: ${lead.tool}`,
     });
     const orch = new AgentOrchestrator({
       device,
       softCap: SOFT_CAP,
       model: MODEL,
+      sessionLead: lead,
       onEvent: handleEvent,
     });
     orchRef.current = orch;
@@ -1471,6 +1753,29 @@ export default function OnboardingSimulator() {
     const userSummary = humanizeResult(pendingTool.name, result);
     pushLog({ kind: 'user', text: userSummary });
     setSignals((s) => mergeSignalsClient(s, pendingTool.name, result));
+
+    // When Essentials resolves, build the inventory-backed decks so
+    // subsequent Swipe / This-or-That screens render gender-appropriate
+    // items with real Unsplash imagery.
+    if (
+      pendingTool.name === 'show_fit_twin_layer' &&
+      result?.layer === 'essentials' &&
+      result?.segment
+    ) {
+      const segment = result.segment;
+      setDeck({
+        segment,
+        swipe: buildSwipeDeck(inventory, segment, 12),
+        tot: buildTotDeck(inventory, segment, 8),
+      });
+      pushLog({
+        kind: 'system',
+        text: `Deck built for ${segment} · swipe=${
+          buildSwipeDeck(inventory, segment, 12).length
+        } · tot=${buildTotDeck(inventory, segment, 8).length}`,
+      });
+    }
+
     const toolId = pendingTool.id;
     const toolName = pendingTool.name;
     setPendingTool(null);
@@ -1495,6 +1800,8 @@ export default function OnboardingSimulator() {
     setPersona(null);
     setPendingTool(null);
     setThinking(false);
+    setDeck({ swipe: [], tot: [], segment: null });
+    setSessionLead(null);
     toolPathRef.current = [];
     setRunKey((k) => k + 1);
   }
@@ -1529,11 +1836,15 @@ export default function OnboardingSimulator() {
     const input = pendingTool.input || {};
     switch (pendingTool.name) {
       case 'show_swipe_card': {
-        const card = SWIPE_CARDS[input.card_index ?? 0] || SWIPE_CARDS[0];
+        const idx = input.card_index ?? 0;
+        const card = deck.swipe[idx] || deck.swipe[0];
+        if (!card) return <WelcomeScreen thinking />;
         return <SwipeScreen card={card} onSubmit={submitResult} />;
       }
       case 'show_this_or_that': {
-        const pair = TOT_PAIRS[input.pair_index ?? 0] || TOT_PAIRS[0];
+        const idx = input.pair_index ?? 0;
+        const pair = deck.tot[idx] || deck.tot[0];
+        if (!pair) return <WelcomeScreen thinking />;
         return <ThisOrThatScreen pair={pair} onSubmit={submitResult} />;
       }
       case 'show_mood_board':
@@ -1553,6 +1864,8 @@ export default function OnboardingSimulator() {
       }
       case 'show_fit_twin_layer': {
         switch (input.layer) {
+          case 'essentials':
+            return <EssentialsScreen onSubmit={submitResult} />;
           case 'closet_anchor':
             return <ClosetAnchorScreen onSubmit={submitResult} />;
           case 'fit_twins':
@@ -1560,13 +1873,21 @@ export default function OnboardingSimulator() {
           case 'sharpen':
             return <SharpenScreen onSubmit={submitResult} />;
           case 'ar':
-            return <ARScreen onSubmit={submitResult} onSkip={skipAR} />;
+            return (
+              <ARScreen
+                heightInches={signals.essentials?.height_inches}
+                onSubmit={submitResult}
+                onSkip={skipAR}
+              />
+            );
           case 'budget':
             return <BudgetScreen onSubmit={submitResult} />;
           default:
             return <WelcomeScreen thinking />;
         }
       }
+      case 'show_tailor_precision_offer':
+        return <TailorPrecisionOfferScreen onSubmit={submitResult} />;
       default:
         return <WelcomeScreen thinking />;
     }
@@ -1664,15 +1985,26 @@ function humanizeResult(toolName, result) {
     return `Answered: "${result.answer}"`;
   }
   if (toolName === 'show_fit_twin_layer') {
+    if (result.layer === 'essentials')
+      return `Essentials: ${result.segment} · ${result.height_label} · shoe ${result.shoe_size}`;
     if (result.layer === 'closet_anchor')
       return `Anchor: ${result.brand} ${result.name} (size ${result.size})`;
     if (result.layer === 'fit_twins') return `Fit twin: ${result.summary}`;
     if (result.layer === 'sharpen')
       return `Sharpen: ${result.chose_label}`;
-    if (result.layer === 'ar')
-      return result.skipped ? 'Skipped AR layer' : 'Captured AR frame';
+    if (result.layer === 'ar') {
+      if (result.skipped) return 'Skipped AR layer';
+      if (result.measurements) {
+        const m = result.measurements;
+        return `Pose captured · shoulders ${m.shoulder_width_in}" · torso ${m.torso_length_in}" · inseam ${m.inseam_in}"`;
+      }
+      return 'Captured AR frame';
+    }
     if (result.layer === 'budget')
       return `Allowance: ${result.band_label}, ${result.fix_size}-item Fix`;
+  }
+  if (toolName === 'show_tailor_precision_offer') {
+    return result.accepted ? 'Yes — go premium' : 'No thanks, finish with 95%';
   }
   return JSON.stringify(result).slice(0, 80);
 }
@@ -1692,6 +2024,8 @@ function summarizeToolCall(tool) {
     return `question_index=${i.question_index}`;
   if (tool.name === 'show_fit_twin_layer')
     return `layer=${i.layer}`;
+  if (tool.name === 'show_tailor_precision_offer')
+    return 'offer tailor-precision (MediaPipe)';
   if (tool.name === 'conclude_with_persona')
     return `archetype=${i.archetype_id} confidence=${i.confidence}`;
   return '';
@@ -1710,10 +2044,17 @@ function mergeSignalsClient(signals, toolName, result) {
   } else if (toolName === 'show_classic_question') {
     next.classic = [...(next.classic || []), result];
   } else if (toolName === 'show_fit_twin_layer') {
-    next.fitTwin = {
-      ...(next.fitTwin || {}),
-      [result.layer || 'unknown']: result,
-    };
+    if (result.layer === 'essentials') {
+      // Lift essentials onto its own top-level slot for easy UI access.
+      next.essentials = result;
+    } else {
+      next.fitTwin = {
+        ...(next.fitTwin || {}),
+        [result.layer || 'unknown']: result,
+      };
+    }
+  } else if (toolName === 'show_tailor_precision_offer') {
+    next.tailorOffer = result;
   }
   return next;
 }
