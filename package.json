@@ -1,0 +1,28 @@
+{
+  "name": "dayone-flow-factory",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "DayOne Flow Factory — a minimalist editorial React app for authoring, routing, and measuring onboarding variants.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "lint": "eslint . --ext .js,.jsx",
+    "predeploy": "npm run build && touch dist/.nojekyll",
+    "deploy": "gh-pages -d dist -t true -m \"Deploy: $(git rev-parse --short HEAD)\""
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.104.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "gh-pages": "^6.3.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "vite": "^5.4.11"
+  }
+}
