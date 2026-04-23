@@ -51,6 +51,7 @@ import {
 } from '../agent/memory.js';
 import {
   captureFrame,
+  fileToJpegFrame,
   requestCameraStream,
   stopStream,
 } from '../agent/camera.js';
@@ -796,16 +797,6 @@ async function poseMeasurementsFromDataUrl(dataUrl, heightInches) {
   return deriveMeasurements(pose, heightInches);
 }
 
-/** File-upload → dataURL helper for image files. */
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('File read failed'));
-    reader.readAsDataURL(file);
-  });
-}
-
 function MeasurementChips({ m }) {
   if (!m) return null;
   const chips = [
@@ -915,8 +906,14 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
   async function handleUpload(which, fileList) {
     if (!fileList || !fileList.length) return;
     const file = fileList[0];
-    if (!file.type.startsWith('image/')) {
-      setErr('That file is not an image. JPG/PNG work best.');
+    // Basic sanity — loose check since HEIC often comes through as
+    // 'image/heic' or even empty. fileToJpegFrame will throw a clear
+    // error if the browser can't decode whatever format it is.
+    const looksLikeImage =
+      file.type?.startsWith('image/') ||
+      /\.(jpg|jpeg|png|gif|webp|heic|heif|avif)$/i.test(file.name || '');
+    if (!looksLikeImage) {
+      setErr('That file is not an image. JPG, PNG, or WEBP work best.');
       setPhase('error');
       return;
     }
@@ -924,24 +921,23 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
       setPhase('analyzing');
       setErr(null);
       ensurePoseLandmarker().catch(() => {});
-      const dataUrl = await fileToDataUrl(file);
-      const base64 = dataUrl.split(',')[1];
+      // Re-encode to JPEG via canvas — guarantees the payload is
+      // Anthropic-vision-compatible even if the user uploaded a HEIC,
+      // AVIF, or something with an exotic MIME type.
+      const frame = await fileToJpegFrame(file);
       let measurements = null;
       try {
         if (heightInches) {
-          measurements = await poseMeasurementsFromDataUrl(dataUrl, heightInches);
+          measurements = await poseMeasurementsFromDataUrl(
+            frame.dataUrl,
+            heightInches,
+          );
         }
       } catch (poseErr) {
         // eslint-disable-next-line no-console
         console.warn('[final-precision] pose (upload) failed:', poseErr?.message || poseErr);
       }
-      const payload = {
-        dataUrl,
-        base64,
-        mediaType: file.type || 'image/jpeg',
-        measurements,
-        source: 'upload',
-      };
+      const payload = { ...frame, measurements, source: 'upload' };
       if (which === 'front') setFrontFrame(payload);
       else setSideFrame(payload);
       setPhase('results');
@@ -1573,6 +1569,7 @@ function FitTwinsScreen({ onSubmit, essentials, closetAnchor }) {
         <div className="grid grid-cols-2 gap-2.5">
           {twins.map((t) => {
             const isBestMatch = t.id === bestMatchId;
+            const display = t.bodyType || t.summary;
             return (
               <button
                 key={t.id}
@@ -1580,6 +1577,7 @@ function FitTwinsScreen({ onSubmit, essentials, closetAnchor }) {
                   onSubmit({
                     layer: 'fit_twins',
                     twin_id: t.id,
+                    body_type: t.bodyType || null,
                     summary: t.summary,
                     blurb: t.blurb,
                     signals: t.signals,
@@ -1600,8 +1598,9 @@ function FitTwinsScreen({ onSubmit, essentials, closetAnchor }) {
                 )}
                 <div className="relative">
                   <div className="type-eyebrow text-white/80">{t.label}</div>
+                  {/* Body type only — height is already in Essentials */}
                   <div className="text-[13px] text-white font-semibold leading-tight mt-1">
-                    {t.summary}
+                    {display}
                   </div>
                   <p className="text-[10.5px] text-white/85 mt-1 leading-snug italic">
                     {t.blurb}
@@ -2123,9 +2122,10 @@ function MemorySidebar({ signals, persona, interactions }) {
             )}
             {signals.fitTwin?.fit_twins && (
               <div>
-                <div className="type-eyebrow text-ink-soft mb-1">Fit twin</div>
+                <div className="type-eyebrow text-ink-soft mb-1">Body type</div>
                 <div className="text-navy">
-                  {signals.fitTwin.fit_twins.summary}
+                  {signals.fitTwin.fit_twins.body_type ||
+                    signals.fitTwin.fit_twins.summary}
                 </div>
               </div>
             )}
@@ -2596,7 +2596,8 @@ function humanizeResult(toolName, result) {
       const b = result.bottom;
       return `Anchors: ${t?.brand} ${t?.name} (${t?.size}) + ${b?.brand} ${b?.name} (${b?.size})`;
     }
-    if (result.layer === 'fit_twins') return `Fit twin: ${result.summary}`;
+    if (result.layer === 'fit_twins')
+      return `Fit twin · ${result.body_type || result.summary}`;
     if (result.layer === 'sharpen')
       return `Sharpen: ${result.chose_label}`;
     if (result.layer === 'ar') {

@@ -175,11 +175,18 @@ export const CLOSET_CATALOG = [
 // with overlapping size + fit preference. The `delta` is what choosing
 // this twin teaches the Fit Twin model about the user.
 
+// Each twin exposes a `summary` that encodes height for internal
+// filtering math (see pickRelevantTwins in OnboardingSimulator) and
+// a display-only `bodyType` the UI shows as the twin's headline.
+// Height is captured once in Essentials and never shown again on the
+// twin cards — it would just repeat what the user already told us.
+
 export const FIT_TWINS = [
   {
     id: 'ft01',
     label: 'Twin A',
     summary: '5\'6", athletic build',
+    bodyType: 'Athletic build',
     blurb: 'Prefers slim through the hip, loves high-rise. Goes one size up in merino, true-to-size in denim.',
     signals: ['athletic', 'slim hip', 'high-rise', 'TTS denim'],
     ph: 'ph-4',
@@ -188,6 +195,7 @@ export const FIT_TWINS = [
     id: 'ft02',
     label: 'Twin B',
     summary: '5\'8", straight build',
+    bodyType: 'Straight build',
     blurb: 'Lives in relaxed silhouettes. Long torso — sizes up in tops, down in bottoms. Avoids anything cropped.',
     signals: ['straight', 'long torso', 'relaxed', 'no crop'],
     ph: 'ph-5',
@@ -196,6 +204,7 @@ export const FIT_TWINS = [
     id: 'ft03',
     label: 'Twin C',
     summary: '5\'4", hourglass',
+    bodyType: 'Hourglass',
     blurb: 'Tailored at the waist, easy through the bust and hip. Buys vintage and tailors modern.',
     signals: ['hourglass', 'tailored waist', 'easy bust', 'easy hip'],
     ph: 'ph-8',
@@ -204,6 +213,7 @@ export const FIT_TWINS = [
     id: 'ft04',
     label: 'Twin D',
     summary: '5\'10", lean',
+    bodyType: 'Lean & long',
     blurb: 'Long everything — inseam, sleeves, torso. Gets bottoms from men\'s department, tops from women\'s.',
     signals: ['long inseam', 'long sleeve', 'lean', 'cross-shops'],
     ph: 'ph-10',
@@ -212,6 +222,7 @@ export const FIT_TWINS = [
     id: 'ft05',
     label: 'Twin E',
     summary: '5\'5", curvy',
+    bodyType: 'Curvy',
     blurb: 'Needs real seat and thigh room. Loves stretch denim, avoids stiff wovens. True-to-size up top.',
     signals: ['curvy', 'real seat', 'stretch denim', 'TTS top'],
     ph: 'ph-11',
@@ -220,6 +231,7 @@ export const FIT_TWINS = [
     id: 'ft06',
     label: 'Twin F',
     summary: '5\'2", petite',
+    bodyType: 'Petite frame',
     blurb: 'Petite proportions — short torso, short inseam. Buys petite-line where possible, tailors where not.',
     signals: ['petite', 'short torso', 'short inseam', 'tailors'],
     ph: 'ph-3',

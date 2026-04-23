@@ -107,7 +107,7 @@ export const AGENT_TOOLS = [
       'Switch to a Fit Twin layer. Layers in accuracy order: ' +
       'essentials = gender/segment + height + shoe size (unlocks segment-aware content — MUST be the first tool you ever call). ' +
       'closet_anchor = collect ONE top + ONE bottom that fit well (85% head-to-toe size signal). ' +
-      'fit_twins = pick the client profile closest to you (90%) — cards are shortlisted to match their captured height + closet sizes. ' +
+      'fit_twins = pick the client body-type profile closest to you (90%). Cards are shortlisted to match the captured height + closet sizes; users see body-type labels only (height is already captured in essentials, never re-shown). Result includes `body_type` — use it for fit reasoning, not the `summary` which still has height for legacy math. ' +
       'sharpen = 2 agent-generated disambiguators (95%). ' +
       'budget = Style Allowance slider + Fix size. ' +
       "The tailor-precision (AR camera) step is handled by show_tailor_precision_offer — don't call an 'ar' layer here.",

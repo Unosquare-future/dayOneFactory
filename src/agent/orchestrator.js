@@ -95,11 +95,19 @@ export class AgentOrchestrator {
     ];
 
     if (imagePayload) {
+      // Anthropic only accepts one of these four media types. Coerce
+      // anything else (HEIC from iOS, AVIF, empty string, …) to the
+      // nearest sane default. Belt-and-suspenders — the upload path
+      // already re-encodes to JPEG.
+      const ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+      const mt = ALLOWED.includes(imagePayload.mediaType)
+        ? imagePayload.mediaType
+        : 'image/jpeg';
       content.push({
         type: 'image',
         source: {
           type: 'base64',
-          media_type: imagePayload.mediaType,
+          media_type: mt,
           data: imagePayload.base64,
         },
       });
