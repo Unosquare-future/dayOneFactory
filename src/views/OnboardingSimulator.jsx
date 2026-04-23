@@ -957,14 +957,17 @@ function FinalPrecisionScreen({ onSubmit, heightInches }) {
       frontFrame?.measurements,
       sideFrame?.measurements,
     );
-    // Prefer the front image as the one we ship to Claude Vision.
+    // Ship ONLY the front image to Claude Vision (the side image's
+    // value is already folded into `measurements` via mergeMeasurements).
+    // Sending a second base64 blob in the tool_result would add ~300–
+    // 500 KB of text to every subsequent turn in the conversation
+    // history and quickly exceed Claude's 200k prompt limit.
     const src = frontFrame || sideFrame;
     onSubmit({
       accepted: true,
       captured: true,
       image_base64: src?.base64,
       image_media_type: src?.mediaType,
-      second_image_base64: frontFrame && sideFrame ? sideFrame.base64 : null,
       measurements: merged,
       source: frontFrame && sideFrame ? 'front+side' : src?.source || 'camera',
       tailor_method: TAILOR_METHOD.name,

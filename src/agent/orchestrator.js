@@ -114,11 +114,27 @@ export class AgentOrchestrator {
       content.push({
         type: 'text',
         text:
-          'The attached image is the AR frame the user just captured. ' +
+          'The attached image is the primary (front) AR frame the user just captured. ' +
           'Use your vision to note silhouette, proportions, and any fit ' +
-          'signals you can read — but return control by calling the next ' +
-          'tool (e.g., continue to budget or conclude_with_persona).',
+          'signals you can read. If the user captured a second (side) ' +
+          'frame, its measurements are already averaged into the ' +
+          '`measurements` field of the tool_result above — no separate ' +
+          'image block is attached for it. Return control by calling ' +
+          'the next tool.',
       });
+    }
+
+    // Dev-time visibility — flag if the conversation is getting huge so
+    // we notice token-budget regressions early.
+    if (typeof console !== 'undefined') {
+      const payloadBytes = JSON.stringify(this.messages).length +
+        JSON.stringify(content).length;
+      if (payloadBytes > 500_000) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[agent] conversation is ${(payloadBytes / 1024).toFixed(0)} KB — risk of token overflow`,
+        );
+      }
     }
 
     this.messages.push({ role: 'user', content });
@@ -327,12 +343,28 @@ function extractImagePayload(result) {
   return null;
 }
 
-/** Build a compact JSON summary Claude can read — without the image blob. */
+/**
+ * Build a compact JSON summary Claude can read — without any image
+ * blob. Drops ANY field matching *_base64 or *_media_type (and the
+ * `dataUrl` field too), so multi-image payloads like
+ *   { image_base64, second_image_base64, measurements, … }
+ * don't silently smuggle hundreds of KB of base64 text into the
+ * conversation history on every subsequent turn. (That's the 200k
+ * prompt explosion we hit.)
+ */
 function summarizeResultForAgent(toolName, result) {
   if (!result) return '{}';
-  // Drop image fields from the text blob so we don't waste context on them
-  const { image_base64, image_media_type, ...rest } = result;
-  return JSON.stringify({ tool: toolName, result: rest });
+  const filtered = {};
+  for (const [k, v] of Object.entries(result)) {
+    if (/_base64$|_media_type$/i.test(k)) continue;
+    if (k === 'dataUrl') continue;
+    // Defensive: drop any stringly-long field (> 4KB) — nothing we
+    // intentionally pass to Claude as text is that large; if
+    // something is, it's an accident.
+    if (typeof v === 'string' && v.length > 4096) continue;
+    filtered[k] = v;
+  }
+  return JSON.stringify({ tool: toolName, result: filtered });
 }
 
 /** Accumulate human-readable signals so the UI can show what we've captured. */
