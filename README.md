@@ -5,14 +5,39 @@ six different onboarding variants against a single style-graph schema,
 backed by a 200-SKU limited inventory. Skinned in the **Editorial Blue**
 design system.
 
+**Live demo:** [unosquare-future.github.io/dayOneFactory](https://unosquare-future.github.io/dayOneFactory/)
+
 ## Run it
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm run build    # production bundle → dist/
+npm run build    # production bundle → dist/ (embeds base: /dayOneFactory/)
 npm run preview  # serve the production build locally
 ```
+
+For a local build that loads at `/` (root path) instead of under
+`/dayOneFactory/`:
+
+```bash
+VITE_BASE=/ npm run build && npm run preview
+```
+
+## Deploy to GitHub Pages
+
+```bash
+npm run deploy   # builds into dist/, pushes to gh-pages branch
+```
+
+The `gh-pages` branch is what GitHub Pages serves from. The workflow:
+1. `predeploy` runs `npm run build && touch dist/.nojekyll`
+2. `deploy` pushes `dist/` to the `gh-pages` branch with dotfiles
+3. GitHub Pages picks up the push and rebuilds (usually < 30 seconds)
+
+**Before deploying,** make sure your local `.env.local` has the live
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_SUPABASE_BUCKET`
+— those get embedded into the client bundle at build time so the live
+site can fetch images from the bucket.
 
 ## Seed real clothing photos
 
