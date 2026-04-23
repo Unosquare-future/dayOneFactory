@@ -196,13 +196,27 @@ function SwipeScreen({ card, onSubmit }) {
           onTouchMove={onMove}
           onTouchEnd={onUp}
         >
-          {hasImage && (
+          {hasImage ? (
             <img
               src={card.imageUrl}
               alt={`${card.brand} ${card.label}`}
               draggable={false}
               className="absolute inset-0 w-full h-full object-cover pointer-events-none"
             />
+          ) : (
+            // Editorial fallback when a SKU hasn't been photographed
+            // yet — big subcategory label so the gradient doesn't read
+            // as "unstyled."
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="text-center text-white/85">
+                <div className="text-[60px] font-bold leading-none tracking-tight drop-shadow">
+                  {card.subcategory?.slice(0, 3).toUpperCase() || 'SKU'}
+                </div>
+                <div className="type-eyebrow text-white/70 mt-3">
+                  photo pending
+                </div>
+              </div>
+            </div>
           )}
           <div className="absolute inset-0 bg-gradient-to-t from-navy/65 via-transparent to-transparent pointer-events-none" />
           {drag > 40 && (

@@ -121,13 +121,12 @@ function readManifest() {
   );
   const parseBlock = (block) => {
     if (!block) return {};
-    // Sanitize: turn into real JSON by removing JS comments, trailing
-    // commas, and ensuring keys are double-quoted.
-    const cleaned = block
-      .replace(/\/\/[^\n]*/g, '')
-      .replace(/([{,]\s*)([A-Za-z_][\w-]*)\s*:/g, '$1"$2":')
-      .replace(/'([^']*)'/g, '"$1"')
-      .replace(/,(\s*[}\]])/g, '$1');
+    // Sanitize: the object block from writeManifest is already JSON-
+    // compatible except for a trailing comma before the closing brace.
+    // Previous versions tried to strip `//` comments with a naive regex
+    // which also chewed the `//` inside `"https://…"` URLs — so we
+    // only fix trailing commas now.
+    const cleaned = block.replace(/,(\s*[}\]])/g, '$1');
     try {
       return JSON.parse(cleaned);
     } catch (e) {
