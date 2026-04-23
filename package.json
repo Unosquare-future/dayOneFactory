@@ -10,7 +10,7 @@
     "preview": "vite preview --port 4173",
     "lint": "eslint . --ext .js,.jsx",
     "predeploy": "npm run build && touch dist/.nojekyll",
-    "deploy": "gh-pages -d dist -t true -m \"Deploy: $(git rev-parse --short HEAD)\""
+    "deploy": "gh-pages -d dist -t -m \"Deploy from main\""
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.0",
